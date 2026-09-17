@@ -248,29 +248,108 @@ fleet-lambda-platform/
 
 ---
 
-## 7. Two-Week Execution Plan
+## 7. Team Structure & Responsibilities
 
-| Day | Deliverable | Done when |
-|-----|------------|-----------|
-| **1** | Repo skeleton, `docker-compose.yml`, ADR 0001 (Lambda vs Kappa), architecture diagram v1 | `docker compose up` starts Kafka, Postgres, MinIO, Spark, Airflow, Grafana, Prometheus healthy |
-| **2** | `config/settings.yaml`, `common/schemas.py`, `common/logging_conf.py`, SQL schema | Tables created on startup; structured logs visible |
-| **3** | `producer_stream.py` + `scenarios.py` | Events flowing into `trip-events`; `kafka-console-consumer` shows them; late/dup/bad events injectable via flag |
-| **4** | `producer_batch.py` writing to MinIO on the sim clock | One expense CSV appears per 5 real minutes; some files deliberately contain bad rows |
-| **5** | `raw_sink_job.py` — Kafka → partitioned Parquet | Parquet partitions visible in MinIO console; row counts match produced counts |
-| **6–7** | `speed_layer_job.py` — windows, watermark, dedup, idle sessionisation → Postgres | `rt_zone_metrics` and `rt_alerts` populate live; late events handled correctly |
-| **8** | `batch/` modules + `test_transforms.py` | Batch job runs standalone on one Parquet partition and produces correct profitability |
-| **9** | `daily_profitability_dag.py` wired end to end | DAG green in Airflow UI; `daily_vehicle_profit` populated; re-run restates, does not duplicate |
-| **10** | Data quality gate + `dq_quarantine` + DAG failure on threshold breach | Deliberately bad file → rows quarantined, DAG fails, alert fires |
-| **11** | FastAPI endpoints + `/metrics` + health checks | All endpoints return correct data; OpenAPI docs render |
-| **12** | Grafana dashboard + Prometheus + 3 alert rules | Dashboard live; killing the producer fires the "no data" alert within 2 min |
-| **13** | Report draft (all 7 required sections), README, screenshots | Report ≈12 pages with diagrams and real screenshots |
-| **14** | Demo video (5–10 min), final polish, tests green, submission | `make demo` reproduces everything from a clean clone |
+The work is split **by pipeline layer**, so each member owns a complete, demonstrable part of the system and can defend it in the viva. Replace *Member A/B/C* with names.
 
-**Buffer strategy:** Days 6–7 (stateful streaming) and Day 9 (Airflow wiring) are the highest-risk. If either slips, cut scope in this order: (1) drop the second Airflow DAG, (2) simplify idle sessionisation to a simple last-seen timestamp comparison rather than full stateful processing, (3) reduce Grafana to one dashboard. **Never cut:** the architecture argument, the data quality gate, or observability — those carry the most marks.
+| Member | Role | Owns (code) | Rubric areas led |
+|--------|------|-------------|------------------|
+| **Member A** | Platform & Ingestion Engineer | `docker-compose.yml`, `.env.example`, `Makefile`, `config/`, `simulators/`, `streaming/raw_sink_job.py`, `observability/`, `common/logging_conf.py`, `common/metrics.py` | Data Ingestion (15), Observability (10), Code Quality & Reproducibility (5) |
+| **Member B** | Stream Processing & Serving Engineer | `common/schemas.py`, `common/transforms.py`, `streaming/speed_layer_job.py`, `sql/`, `common/db.py`, `api/` | Processing: speed layer (15, shared), Storage & Serving (10) |
+| **Member C** | Batch Processing & Data Quality Engineer | `batch/`, `airflow/dags/`, data quality rules, `dq_quarantine`, daily report rendering | Processing: batch layer (15, shared), Report compilation (15) |
+
+### Shared responsibilities (all members)
+
+- **Architecture decision (20 marks):** Lambda vs Kappa argument agreed in a joint session on Day 1; each member contributes the justification for their own layer.
+- **Tech stack justification (10 marks):** each member writes the rows for the tools they own.
+- **Tests:** each member writes unit tests for their own modules.
+- **Demo video:** each member presents their own layer (about 2-3 minutes each).
+- **Viva readiness:** each member reviews at least one other member's pull request, so every line is understood by two people.
+
+### Report section ownership
+
+| Report section | Lead | Support |
+|----------------|------|---------|
+| 1-2 Introduction, use case, requirements | C | All |
+| 3 Architecture decision (Lambda vs Kappa) | All (joint) | - |
+| 4 Architecture diagrams | A | B |
+| 5 Tech stack justification | Each writes own rows | C edits |
+| 6 Implementation: ingestion | A | - |
+| 6 Implementation: speed layer & serving | B | - |
+| 6 Implementation: batch layer & data quality | C | - |
+| 7 Observability design | A | - |
+| 8 Results & screenshots | B | All |
+| 9 Limitations & production scale | All | C edits |
+| Final compilation, formatting, PDF | C | - |
+
+### Integration contracts (agreed on Day 2, before parallel work starts)
+
+These interfaces let the three tracks work independently without blocking each other:
+
+| Contract | Defined by | Consumed by |
+|----------|-----------|-------------|
+| Kafka event schema (`trip-events`) in `common/schemas.py` | B (with A) | A (producer), B (speed layer), C (batch reads Parquet) |
+| Expense CSV schema + MinIO landing path | C (with A) | A (batch simulator), C (DAG) |
+| Raw Parquet layout `dt=YYYY-MM-DD/hour=HH` | A | C |
+| Postgres serving tables in `sql/001_schema.sql` | B | B (speed, API), C (batch upserts), A (Grafana) |
+| Metric names + log fields in `common/metrics.py`, `common/logging_conf.py` | A | B, C |
+
+Until a dependency is ready, each member works against **sample fixtures** (a small JSON event file, a sample Parquet partition, a sample CSV) committed to `tests/fixtures/`.
+
+### Collaboration workflow
+
+- **Branches:** `main` is always runnable; each member works on `feature/<area>-<short-name>` branches.
+- **Pull requests:** every merge into `main` needs one review from another member.
+- **Stand-up:** 10-minute daily check-in: done yesterday, doing today, blocked by.
+- **Task board:** GitHub Projects board with one card per deliverable in §8, assigned to its owner.
+- **Contribution evidence:** commits and PRs are the record used for the contribution statement.
+
+### Individual contribution statement (submission template)
+
+> **Member A (Platform & Ingestion):** Designed and built the Docker Compose environment, streaming and batch data simulators with fault injection, the Kafka topic design, the raw Parquet sink, and the observability stack (structured logging, Prometheus metrics, Grafana dashboards and alert rules). Wrote the report sections on diagrams, ingestion and observability.
+>
+> **Member B (Stream Processing & Serving):** Designed the shared event schemas and transformation library, implemented the Spark Structured Streaming speed layer (windowing, watermarking, deduplication, idle detection), the PostgreSQL serving schema, and the FastAPI serving layer. Wrote the report sections on the speed layer, serving layer and results.
+>
+> **Member C (Batch Processing & Data Quality):** Implemented the Airflow daily profitability DAG, Spark batch aggregation and cost reconciliation logic, the data quality gate with row quarantine, idempotent serving loads, and daily report generation. Wrote the report sections on requirements and the batch layer, and compiled the final report.
+>
+> **Joint:** Architecture decision (Lambda vs Kappa), technology stack justification, integration testing, and the demo video.
 
 ---
 
-## 8. Report Outline (8–15 pages, 15 marks)
+## 8. Two-Week Execution Plan
+
+Three parallel tracks. Rows marked **Joint** are team-wide milestones.
+
+### Week 1: Foundations and core pipelines
+
+| Day | Member A: Platform & Ingestion | Member B: Stream & Serving | Member C: Batch & Data Quality |
+|-----|--------------------------------|-----------------------------|---------------------------------|
+| 1 | **Joint:** agree Lambda decision, draft ADR 0001, architecture diagram v1, set up GitHub board | **Joint** | **Joint** |
+| 2 | Repo skeleton, `docker-compose.yml` (Kafka, MinIO, Postgres, Spark, Airflow) | `common/schemas.py`, `sql/001_schema.sql` | Expense CSV schema, data quality rule list, Airflow container setup |
+| 2 (end) | **Joint:** sign off integration contracts (§7), commit sample fixtures | **Joint** | **Joint** |
+| 3 | `producer_stream.py` + `config/settings.yaml` | `common/transforms.py` (pure functions) + unit tests | `batch/trip_aggregation.py` against fixture Parquet |
+| 4 | `scenarios.py` (late, duplicate, bad events) + `producer_batch.py` | `speed_layer_job.py`: parse, schema enforcement, dead-letter topic | `batch/expense_validation.py` + `test_expense_validation.py` |
+| 5 | `raw_sink_job.py`: Kafka to partitioned Parquet | Speed layer: 1-min windows, watermark, dedup to `rt_zone_metrics` | `batch/profitability.py`: join, profit, flags + tests |
+| 6 | `common/logging_conf.py` + `common/metrics.py`; add logging to simulators | Speed layer: idle detection to `rt_vehicle_state`, `rt_alerts` | `daily_profitability_dag.py` skeleton (sensor, validate, aggregate) |
+| 7 | **Joint integration checkpoint:** events flow producer to Kafka to Parquet + Postgres; DAG reads real Parquet | **Joint** | **Joint** |
+
+### Week 2: Serving, observability, integration and delivery
+
+| Day | Member A: Platform & Ingestion | Member B: Stream & Serving | Member C: Batch & Data Quality |
+|-----|--------------------------------|-----------------------------|---------------------------------|
+| 8 | Prometheus setup, scrape configs, pushgateway | FastAPI: `/metrics/fleet`, `/metrics/zones`, `/alerts/active` | DAG: join, profitability, idempotent upsert to `daily_vehicle_profit` |
+| 9 | Grafana dashboards (live fleet + pipeline health) | FastAPI: `/reports/daily/*`, `/health`, `/health/pipeline` | DQ gate: quarantine table, DAG fails above threshold |
+| 10 | Grafana alert rules (no data, DQ failure, idle vehicle) | `test_api.py`, `pipeline_runs` logging, Postgres read-only role | Daily report rendering (CSV/HTML) + `data_quality_dag.py` |
+| 11 | **Joint integration day:** full end-to-end run, fix cross-layer bugs, run §13 verification checks, each member walks the others through their layer | **Joint** | **Joint** |
+| 12 | `Makefile`, README setup steps, clean-clone reproducibility test, performance benchmark | Capture result screenshots; write report sections (speed layer, serving, results) | Write report sections (intro, requirements, batch, DQ); start compiling |
+| 13 | Write report sections (diagrams, ingestion, observability); review C's code | Review A's report sections and code | Compile full report; review B's sections |
+| 14 | **Joint:** record demo video, final review, contribution statement, submit | **Joint** | **Joint** |
+
+**Buffer strategy:** the highest-risk items are Member B's stateful idle detection (Day 6) and Member C's Airflow wiring (Days 8-9). If either slips, the other members help on integration day, and scope is cut in this order: (1) drop the second Airflow DAG, (2) simplify idle detection to a last-seen timestamp comparison, (3) reduce Grafana to one dashboard. **Never cut:** the architecture argument, the data quality gate, or observability. Those carry the most marks.
+
+---
+
+## 9. Report Outline (8–15 pages, 15 marks)
 
 1. **Introduction & use case** (1 p) — scenario, stakeholders, the business question.
 2. **Requirements** (1 p) — the R1–R5 table from §2, with latency/consistency classification.
@@ -281,11 +360,11 @@ fleet-lambda-platform/
 7. **Observability design** (1.5 p) — what is measured, how, why; screenshots of the dashboard and a firing alert; the trace-id walkthrough of one event end to end.
 8. **Results** (1.5 p) — screenshots of the live dashboard, an API response, a sample daily profitability report, the quarantine table after a bad file.
 9. **Limitations & production scale** (1.5 p) — single-broker Kafka, no exactly-once sink, no schema registry, no partition-level compaction; what changes at real scale (multi-broker + replication, Iceberg/Delta instead of raw Parquet, schema registry with Avro, autoscaling Spark, dbt for the serving models).
-10. **Appendix** — cloud mapping table (§9), repo link, individual contributions if a group.
+10. **Appendix** — cloud mapping table (§10), repo link, individual contribution statement (§7).
 
 ---
 
-## 9. Cloud Mapping
+## 10. Cloud Mapping
 
 For the report appendix — how each local component maps to a managed cloud service:
 
@@ -300,19 +379,21 @@ For the report appendix — how each local component maps to a managed cloud ser
 
 ---
 
-## 10. Risks & Mitigations
+## 11. Risks & Mitigations
 
 | Risk | Likelihood | Mitigation |
 |------|-----------|-----------|
 | Spark + Kafka + Airflow together exhaust laptop RAM | High | Single Kafka broker in KRaft mode (no ZooKeeper), Spark in local mode, Airflow with LocalExecutor + SQLite metadata DB; document a 8 GB RAM minimum |
 | Stateful streaming (idle sessionisation) proves fiddly | Medium | Fallback: derive idle duration from a `last_seen`/`last_status` table updated per micro-batch — simpler, still correct enough for the alert |
 | Airflow + Spark container networking issues | Medium | Run the batch Spark job via `SparkSubmitOperator` against the same Spark container; keep a `PythonOperator` + local PySpark fallback |
-| Two-week window slips | Medium | The cut-order in §7; the architecture argument and report are written from Day 1, not deferred |
-| Cannot defend the code in the viva | Medium | ADR per major decision, written as the decision is made; a self-quiz pass on Day 13 covering every transformation |
+| Two-week window slips | Medium | The cut-order in §8; the architecture argument and report are written from Day 1, not deferred |
+| One track blocks another | Medium | Integration contracts signed off on Day 2; each member develops against committed sample fixtures until the real upstream is ready |
+| Uneven contribution or knowledge silos | Medium | Clear ownership in §7; mandatory cross-member PR review; each member presents their own layer in the demo |
+| Cannot defend the code in the viva | Medium | ADR per major decision, written as the decision is made; each member walks the others through their layer on Day 11 |
 
 ---
 
-## 11. Definition of Done
+## 12. Definition of Done
 
 - [ ] `git clone` → `cp .env.example .env` → `make up` → `make demo` reproduces the full pipeline on a clean machine.
 - [ ] Live dashboard shows zone utilisation updating within one minute of events.
@@ -324,10 +405,12 @@ For the report appendix — how each local component maps to a managed cloud ser
 - [ ] Report PDF, 8–15 pages, covering all seven required sections with real screenshots.
 - [ ] 5–10 minute demo video recorded.
 - [ ] Every ADR written and every transformation explainable without notes.
+- [ ] Individual contribution statement completed and agreed by all three members.
+- [ ] Every member can explain the architecture decision and their own layer in the viva.
 
 ---
 
-## 12. Verification Plan
+## 13. Verification Plan
 
 | What | How |
 |------|-----|
