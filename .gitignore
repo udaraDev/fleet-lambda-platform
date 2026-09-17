@@ -1,0 +1,27 @@
+# Module brief (not for public distribution)
+EC8203 MiniProject 2026.pdf
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Spark / Airflow / generated data
+spark-warehouse/
+metastore_db/
+checkpoints/
+airflow/logs/
+data/
+reports/*
+!reports/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
