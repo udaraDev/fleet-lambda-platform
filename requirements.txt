@@ -1,0 +1,6 @@
+fastapi==0.115.12
+uvicorn==0.34.2
+kafka-python==2.2.11
+psycopg2-binary==2.9.10
+pyarrow==19.0.1
+pyspark==3.5.6
