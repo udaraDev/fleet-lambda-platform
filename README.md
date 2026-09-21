@@ -7,6 +7,28 @@ trip revenue against fuel and maintenance expenses.
 [implementation status](docs/IMPLEMENTATION_STATUS.md) for checks and remaining
 work from the [full project plan](PROJECT_PLAN.md).
 
+The priority correctness upgrade is described in [priority fixes](docs/PRIORITY_FIXES.md).
+Batch aggregation now uses Spark; missing telemetry is explicitly incomplete,
+committed archives are verified, and serving writes use bounded transactional bulks.
+
+### Upgrade an existing dataset
+
+Fresh installations run both schema SQL files automatically. Existing volumes need
+the additive migration below before starting the upgraded writer. Back up the fleet
+database first; do not delete checkpoints, archives or volumes.
+
+```powershell
+docker compose build api airflow-scheduler
+docker compose stop airflow-scheduler streaming producer-stream
+docker compose run --rm --no-deps api python -m scripts.migrate_integrity
+docker compose up -d --no-deps streaming producer-stream producer-batch api airflow-scheduler airflow-webserver
+```
+
+The migration checks historical archive counts and baselines SHA-256 manifests and
+event identities. Baseline hashes detect future changes, not alterations made before
+the migration. If a file/count is missing, migration fails instead of inventing data.
+Only restart upgraded writers after it succeeds.
+
 ## Architecture
 
 ```text
@@ -52,6 +74,7 @@ successful setup; this is expected. Other services should remain running.
 - Zone metrics: <http://localhost:8001/metrics/zones>
 - Time-of-day earnings: <http://localhost:8001/metrics/time-of-day?report_date=2026-03-01>
 - Pipeline health: <http://localhost:8001/health/pipeline>
+- Batch/report health: <http://localhost:8001/health/reports>
 - Metrics export: <http://localhost:8001/metrics>
 - Available report dates: <http://localhost:8001/reports/daily>
 - Airflow: <http://localhost:8080> (`admin` / `fleet_demo` by default).
@@ -152,6 +175,12 @@ py -3.11 -m venv .venv
 - A trip belongs to its UTC completion date, including trips crossing midnight.
 - Missing expense records produce `missing_expenses` and null profitability.
   Expense-only vehicles have zero revenue and retain their costs.
+- Missing or partial telemetry produces `incomplete_telemetry`; conflicting events
+  produce `conflicting_events`. Profit, margin and loss classification are unknown
+  in both cases. Coverage checks the registered fleet's configured simulated cadence.
+- Daily API responses include a publication run ID, export status and per-vehicle
+  coverage. A pending export explicitly indicates that the file has not caught up
+  with the database version. Legacy reports without metadata remain unverified.
 - Every fourth vehicle stays parked, providing an idle-alert example and a
   loss-making vehicle with costs but no completed trips.
 - Active means reporting in `enroute` or `on_trip`. Idle ratio is idle/reporting
@@ -177,10 +206,15 @@ a commit ledger entry. Retries rewrite only an uncommitted batch. Reconciliation
 reads ledger-committed archives. Never delete only the checkpoint, archive or
 database: these form one dataset.
 
-Airflow reprocesses all ready expense files every minute in this small demo, so
-late events and corrected costs restate prior days. Readiness does not prove every
-possible late event has arrived; reports reflect committed input at that run.
-A failed quality check preserves the last good report.
+Airflow checks ready dates every minute using a committed input snapshot, newest
+first. Unchanged verified inputs skip Spark recomputation; changed/late inputs
+restate their date. A failed date does not prevent other dates from processing,
+and the overall task fails after collecting per-date errors. Missing expected
+expense files are errors. A failed quality/archive check preserves the last good
+report. Financial completeness does not imply that no future correction can arrive.
+Each run recomputes at most five changed dates by default, deferring remaining
+historical backfills so newly closed days get another scheduling opportunity.
+Set `MAX_CHANGED_DATES_PER_RUN` to tune that budget; unchanged checks do not consume it.
 
 Generated reports live in the shared volume. To copy one to the workspace:
 
@@ -192,16 +226,18 @@ docker compose cp api:/data/reports/profitability_2026-03-01.json reports/
 ## Remaining work and limitations
 
 Still planned: Spark event-time windows/watermarks, MinIO, separate raw/speed
-consumers, scalable Spark batch aggregation, Grafana, Prometheus scraping/alerts,
+consumers, Grafana, Prometheus scraping/alerts,
 fault-injection switches, durable business alerts and final report/demo evidence.
-The current Airflow batch uses PyArrow and shared Python accounting rules.
+The Airflow batch uses Spark DataFrames for trip aggregation, conflicts, coverage
+and the expense join. PyArrow is used for archive metadata and test fixtures.
 
 This version uses one Kafka broker and single-node Spark. Micro-batches are bounded
-and processed through the driver; daily reconciliation keeps a day's trips in
-memory. It does not claim end-to-end exactly-once delivery. Simulation restarts may
+and capped at 2,500 rows before collection; serving uses bulk database operations
+inside one transaction with the commit ledger. Daily trip state stays in Spark,
+with only fleet-size summaries collected. It does not claim end-to-end exactly-once delivery. Simulation restarts may
 skip ticks. Idle detection follows observed state changes and does not reconstruct
 late historical sessions. Database and JSON publication are separate operations;
-a failed export is retried by Airflow.
+a pending publication status exposes export failure until Airflow retries it.
 
 ## Technical references
 

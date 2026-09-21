@@ -1,5 +1,9 @@
 # Implementation status
 
+Latest: [priority correctness and Spark batch upgrade](PRIORITY_FIXES.md).
+The sections below retain the historical first-increment implementation record;
+the priority-fixes document supersedes its PyArrow-only batch and verification status.
+
 ## Increment 1: core pipeline
 
 Implemented:

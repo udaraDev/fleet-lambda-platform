@@ -53,3 +53,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["vehicles"][0]["profit_cents"])
         self.assertEqual(response.json()["money_unit"], "cents")
+
+    @patch("api.main.fetch_all")
+    def test_report_health_detects_failed_batch_with_fresh_report(self, fetch):
+        from datetime import date
+        fetch.side_effect = [[{"failed_dates": 1, "stalled_dates": 0}],
+                             [{"latest_report": date(2026, 3, 1), "pending_exports": 0}],
+                             [{"expected_report": date(2026, 3, 1)}]]
+        response = self.client.get("/health/reports")
+        self.assertEqual(response.status_code, 503)
+        self.assertFalse(response.json()["healthy"])
+
+    @patch("api.main.fetch_all")
+    def test_report_health_accepts_published_current_report(self, fetch):
+        from datetime import date
+        fetch.side_effect = [[{"failed_dates": 0, "stalled_dates": 0}],
+                             [{"latest_report": date(2026, 3, 1), "pending_exports": 0}],
+                             [{"expected_report": date(2026, 3, 1)}]]
+        self.assertEqual(self.client.get("/health/reports").status_code, 200)

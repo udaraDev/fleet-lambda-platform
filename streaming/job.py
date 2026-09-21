@@ -6,11 +6,15 @@ checkpoint, raw volume and database together; deleting only one is unsupported.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
+from psycopg2.extras import Json
 
-from common.db import connection
-from common.domain import validate_event
+from common.db import connection, clock_start
+from common.domain import SIM_START, simulated_time, validate_event
+from common.archive import build_manifest
+from streaming.sink import bulk_serve, EVENT_FIELDS
 from common.logging_conf import log
-from common.settings import DATA_DIR, KAFKA_BOOTSTRAP, TOPIC
+from common.settings import DATA_DIR, KAFKA_BOOTSTRAP, TOPIC, SIM_DAY_SECONDS, EVENT_INTERVAL_SECONDS
 
 
 def event_error(raw):
@@ -33,9 +37,16 @@ def process_batch(frame, batch_id):
         cur.execute("SELECT 1 FROM pipeline_batches WHERE batch_id = %s", (batch_id,))
         if cur.fetchone():
             return
-    frame.persist()
+    cached = frame.persist()
     try:
         count = frame.count()
+        if count > 2500:
+            raise ValueError("Micro-batch exceeds serving safety cap; reduce Kafka offsets per trigger")
+        upper = simulated_time(clock_start(), datetime.now(timezone.utc), SIM_DAY_SECONDS) + timedelta(
+            seconds=2 * EVENT_INTERVAL_SECONDS * 86400 / SIM_DAY_SECONDS)
+        frame = frame.withColumn("error", F.when(F.col("error").isNotNull(), F.col("error")).when(
+            (F.try_to_timestamp("event.event_ts") < F.lit(SIM_START)) |
+            (F.try_to_timestamp("event.event_ts") > F.lit(upper)), F.lit("outside_simulation_time")))
         valid = frame.filter("error IS NULL").select("event.*").withColumn(
             "event_time", F.to_timestamp("event_ts")
         ).withColumn("dt", F.to_date("event_time")).withColumn(
@@ -45,55 +56,33 @@ def process_batch(frame, batch_id):
              .when(F.hour("event_time") < 18, "afternoon").otherwise("evening"),
         )
         good_count = valid.count()
-        if good_count:
-            valid.write.mode("overwrite").partitionBy("dt").parquet(str(DATA_DIR / "raw" / str(batch_id)))
+        # Also replace an empty uncommitted batch, so a retry cannot retain stale files.
+        valid.write.mode("overwrite").partitionBy("dt").parquet(str(DATA_DIR / "raw" / str(batch_id)))
         if count > good_count:
             frame.filter("error IS NOT NULL").select("raw", "error", "partition", "offset").write.mode(
                 "overwrite"
             ).json(str(DATA_DIR / "quarantine" / "stream" / str(batch_id)))
 
         # Spark normalises, enriches, deduplicates and orders each bounded batch.
-        events = valid.dropDuplicates(["event_id"]).orderBy("event_time", "event_id")
+        # Keep duplicate payloads until conflict detection; never choose one arbitrarily.
+        events = valid.select(*EVENT_FIELDS, "ingest_ts", "time_of_day_bucket").collect()
+        manifest = build_manifest(DATA_DIR / "raw" / str(batch_id), good_count)
         latest = valid.agg(F.max("event_time")).first()[0] if good_count else None
         with connection() as conn, conn.cursor() as cur:
-            for row in events.toLocalIterator():
-                item = row.asDict()
-                cur.execute("""
-                    INSERT INTO rt_vehicle_state
-                        (vehicle_id, zone, status, idle_since, event_ts, event_id, trace_id)
-                    VALUES (%s, %s, %s, CASE WHEN %s = 'idle' THEN %s::timestamptz END, %s, %s, %s)
-                    ON CONFLICT (vehicle_id) DO UPDATE SET
-                        zone = EXCLUDED.zone, status = EXCLUDED.status,
-                        idle_since = CASE
-                            WHEN EXCLUDED.status <> 'idle' THEN NULL
-                            WHEN rt_vehicle_state.status = 'idle' THEN rt_vehicle_state.idle_since
-                            ELSE EXCLUDED.event_ts END,
-                        event_ts = EXCLUDED.event_ts, event_id = EXCLUDED.event_id, trace_id = EXCLUDED.trace_id
-                    WHERE (EXCLUDED.event_ts, EXCLUDED.event_id) >
-                          (rt_vehicle_state.event_ts, rt_vehicle_state.event_id)
-                """, (item["vehicle_id"], item["zone"], item["status"], item["status"], item["event_ts"],
-                      item["event_ts"], item["event_id"], item["trace_id"]))
-                if item["trip_completed"]:
-                    cur.execute("""
-                        INSERT INTO completed_trips
-                            (trip_id, vehicle_id, zone, fare_cents, completed_at, time_of_day_bucket, trace_id)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING
-                    """, (item["trip_id"], item["vehicle_id"], item["zone"], item["fare_cents"],
-                          item["event_ts"], item["time_of_day_bucket"], item["trace_id"]))
-                    cur.execute("SELECT vehicle_id, fare_cents, completed_at FROM completed_trips WHERE trip_id=%s",
-                                (item["trip_id"],))
-                    existing = cur.fetchone()
-                    from common.domain import parse_timestamp
-                    if existing != (item["vehicle_id"], item["fare_cents"], parse_timestamp(item["event_ts"])):
-                        raise ValueError(f"Conflicting completion for trip {item['trip_id']}")
+            # Serialize serving commits even if an operator starts a second writer.
+            cur.execute("SELECT pg_advisory_xact_lock(8203, 0)")
+            cur.execute("SELECT 1 FROM pipeline_batches WHERE batch_id=%s", (batch_id,))
+            if cur.fetchone():
+                return
+            conflicts = bulk_serve(cur, [row.asDict() for row in events], batch_id)
             cur.execute("""
-                INSERT INTO pipeline_batches (batch_id, rows_in, rows_valid, rows_rejected, max_event_ts)
-                VALUES (%s,%s,%s,%s,%s)
-            """, (batch_id, count, good_count, count - good_count, latest))
+                INSERT INTO pipeline_batches (batch_id, rows_in, rows_valid, rows_rejected, max_event_ts, archive_manifest)
+                VALUES (%s,%s,%s,%s,%s,%s)
+            """, (batch_id, count, good_count, count - good_count, latest, Json(manifest)))
         log("streaming", "batch_committed", batch_id=batch_id, rows_in=count,
-            rows_valid=good_count, rows_rejected=count - good_count, max_event_ts=latest)
+            rows_valid=good_count, rows_rejected=count - good_count, conflicts=conflicts, max_event_ts=latest)
     finally:
-        frame.unpersist()
+        cached.unpersist()
 
 
 def main():
@@ -116,9 +105,9 @@ def main():
     source = spark.readStream.format("kafka").option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP).option(
         "subscribe", TOPIC
     ).option("startingOffsets", "earliest").option("maxOffsetsPerTrigger", 2000).load()
+    from streaming.validation import validation_error
     parsed = source.selectExpr("CAST(value AS STRING) AS raw", "partition", "offset").withColumn(
-        "error", F.udf(event_error, T.StringType())("raw")
-    ).withColumn("event", F.from_json("raw", schema))
+        "event", F.from_json("raw", schema)).withColumn("error", validation_error())
     log("streaming", "started", topic=TOPIC)
     query = parsed.writeStream.foreachBatch(process_batch).option(
         "checkpointLocation", str(DATA_DIR / "checkpoints" / "fleet")

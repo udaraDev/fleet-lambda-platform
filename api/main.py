@@ -47,6 +47,30 @@ def health_pipeline():
         return JSONResponse({"status": "database_unavailable", "healthy": False}, status_code=503)
 
 
+@app.get("/health/reports")
+def health_reports():
+    """Batch health is separate from live ingestion and financial completeness."""
+    try:
+        summary = fetch_all("""WITH latest AS (
+            SELECT DISTINCT ON (dt) dt,status,started_at FROM pipeline_runs ORDER BY dt,started_at DESC
+        ) SELECT count(*) FILTER (WHERE status='failed') AS failed_dates,
+            count(*) FILTER (WHERE status='running' AND started_at < now()-interval '20 minutes') AS stalled_dates
+            FROM latest""")[0]
+        publication = fetch_all("""SELECT max(dt) FILTER (WHERE export_status='published') AS latest_report,
+            count(*) FILTER (WHERE export_status <> 'published') AS pending_exports
+            FROM daily_report_status""")[0]
+        expected = fetch_all("SELECT max(max_event_ts)::date - 1 AS expected_report FROM pipeline_batches")[0]["expected_report"]
+        healthy = (not summary["failed_dates"] and not summary["stalled_dates"] and
+                   not publication["pending_exports"] and expected is not None and
+                   publication["latest_report"] is not None and publication["latest_report"] >= expected)
+        from fastapi.encoders import jsonable_encoder
+        return JSONResponse(jsonable_encoder({"healthy": healthy, "status": "healthy" if healthy else "degraded",
+                            "expected_report": expected, **summary, **publication}), status_code=200 if healthy else 503)
+    except Exception as exc:
+        log("api", "report_health_unavailable", error=str(exc))
+        return JSONResponse({"healthy": False, "status": "database_unavailable"}, status_code=503)
+
+
 @app.get("/metrics/fleet")
 def fleet():
     result = fetch_all("""WITH reference AS (SELECT max(event_ts) AS ts FROM rt_vehicle_state)
@@ -109,7 +133,9 @@ def daily_report(report_date: date):
                      (report_date,))
     if not rows:
         raise HTTPException(404, "No reconciled report for that simulated date yet")
-    return {"date": report_date, "currency": "LKR", "money_unit": "cents", "vehicles": rows}
+    versions = fetch_all("SELECT run_id,export_status,coverage,updated_at FROM daily_report_status WHERE dt=%s", (report_date,))
+    return {"date": report_date, "currency": "LKR", "money_unit": "cents", "vehicles": rows,
+            "publication": versions[0] if versions else {"export_status": "legacy_unverified"}}
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
