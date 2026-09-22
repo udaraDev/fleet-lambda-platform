@@ -11,6 +11,9 @@ x-app-env: &app-env
   DQ_FAILURE_THRESHOLD: ${DQ_FAILURE_THRESHOLD:-0.05}
   MAX_CHANGED_DATES_PER_RUN: ${MAX_CHANGED_DATES_PER_RUN:-5}
   PROMETHEUS_URL: http://prometheus:9090
+  MINIO_ENDPOINT: http://minio:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
 
 x-app: &app
   image: fleet-platform:dev
@@ -106,10 +109,52 @@ services:
       - fleet-data:/data
     command: [python, -c, "import os; os.chown('/data',50000,0); os.chmod('/data',0o770)"]
 
-  streaming:
+  minio:
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-mc:
+    image: minio/mc:RELEASE.2024-04-18T16-45-29Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb local/fleet-raw --ignore-existing;
+      "
+
+  streaming-raw:
     <<: *app
     command: [spark-submit, --master, 'local[2]', --driver-memory, 1g,
-              --packages, 'org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6', streaming/job.py]
+              --packages, 'org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262', streaming/raw_job.py]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      data-init:
+        condition: service_completed_successfully
+      minio-mc:
+        condition: service_completed_successfully
+
+  streaming-speed:
+    <<: *app
+    command: [spark-submit, --master, 'local[2]', --driver-memory, 1g,
+              --packages, 'org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6', streaming/speed_job.py]
     depends_on:
       postgres:
         condition: service_healthy
@@ -225,3 +270,4 @@ volumes:
   airflow-logs:
   prometheus-data:
   grafana-data:
+  minio-data:

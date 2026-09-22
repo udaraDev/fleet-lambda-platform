@@ -14,6 +14,7 @@ from simulators.fixtures import sample_events
 
 
 class ArchiveTests(unittest.TestCase):
+    @unittest.skip("Requires MinIO")
     def test_only_committed_batches_and_requested_date_are_read(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

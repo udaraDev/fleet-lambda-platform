@@ -44,6 +44,12 @@ DQ_FAILURE_THRESHOLD = float(os.getenv("DQ_FAILURE_THRESHOLD", _dq.get("dq_failu
 MAX_CHANGED_DATES_PER_RUN = int(os.getenv("MAX_CHANGED_DATES_PER_RUN", _pip.get("max_changed_dates_per_run", 5)))
 IDLE_ALERT_MINUTES = int(os.getenv("IDLE_ALERT_MINUTES", _srv.get("idle_alert_minutes", 5)))
 
+_minio = _cfg.get("minio", {})
+MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", _minio.get("endpoint", "http://localhost:9000"))
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", _minio.get("access_key", "minioadmin"))
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", _minio.get("secret_key", "minioadmin"))
+MINIO_BUCKET = os.getenv("MINIO_BUCKET", _minio.get("bucket", "fleet-raw"))
+
 if SIM_DAY_SECONDS <= 0 or EVENT_INTERVAL_SECONDS <= 0 or VEHICLE_COUNT <= 0:
     raise ValueError("Clock, interval and fleet size must be positive")
 if not 0 <= DQ_FAILURE_THRESHOLD <= 1:

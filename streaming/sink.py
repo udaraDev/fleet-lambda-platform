@@ -140,38 +140,6 @@ def bulk_serve(cur, events, batch_id):
         (event_id,fingerprint,event_ts,vehicle_id,trip_id,batch_id) VALUES %s ON CONFLICT DO NOTHING""",
         [(e["event_id"], fingerprint(e), e["event_ts"], e["vehicle_id"], e["trip_id"], batch_id) for e in accepted])
 
-    # --- rt_zone_metrics: windowed zone aggregates (updated every micro-batch) ---
-    # Window start is truncated to the nearest minute using the max event_ts in this batch.
-    if accepted:
-        from datetime import timezone as _tz
-        from collections import Counter as _Counter
-        max_ts = max(parse_timestamp(e["event_ts"]) for e in accepted)
-        window_start = max_ts.replace(second=0, microsecond=0)
-        # Use current state (after writes) for zone counts
-        cur.execute("""SELECT zone, count(*) AS reporting,
-                           count(*) FILTER (WHERE status <> 'idle') AS active,
-                           count(*) FILTER (WHERE status = 'idle')::float / NULLIF(count(*),0) AS idle_ratio
-                       FROM rt_vehicle_state GROUP BY zone""")
-        zone_state = {r[0]: r[1:] for r in cur.fetchall()}
-        cur.execute("""SELECT zone, count(*) AS trips, COALESCE(sum(fare_cents),0) AS earnings
-                       FROM completed_trips
-                       WHERE completed_at >= %s - interval '1 minute'
-                       GROUP BY zone""", (max_ts,))
-        zone_trips = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
-        all_zones = set(zone_state) | set(zone_trips)
-        if all_zones:
-            execute_values(cur, """INSERT INTO rt_zone_metrics
-                (window_start, zone, active_vehicles, idle_ratio, trips, earnings_cents, updated_at)
-                VALUES %s ON CONFLICT (window_start, zone) DO UPDATE SET
-                active_vehicles=EXCLUDED.active_vehicles, idle_ratio=EXCLUDED.idle_ratio,
-                trips=EXCLUDED.trips, earnings_cents=EXCLUDED.earnings_cents, updated_at=now()""",
-                [(window_start, z,
-                  zone_state.get(z, (0, None, None))[1] or 0,
-                  zone_state.get(z, (0, None, None))[2],
-                  zone_trips.get(z, (0, 0))[0],
-                  zone_trips.get(z, (0, 0))[1])
-                 for z in all_zones])
-
     # --- rt_alerts: raise/resolve idle-threshold alerts ---
     from common.settings import IDLE_ALERT_MINUTES
     if changed or accepted:

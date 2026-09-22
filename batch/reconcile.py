@@ -18,13 +18,24 @@ from common.settings import DATA_DIR, DQ_FAILURE_THRESHOLD, EVENT_INTERVAL_SECON
 
 def read_events(report_date, batch_ids):
     import pyarrow.parquet as pq
+    import s3fs
+    from common.settings import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET
+
+    fs = s3fs.S3FileSystem(
+        client_kwargs={"endpoint_url": MINIO_ENDPOINT},
+        key=MINIO_ACCESS_KEY,
+        secret=MINIO_SECRET_KEY,
+    )
 
     for batch_id in batch_ids:
         # Only DB-committed archives are eligible; unfinished Spark writes are ignored.
-        directory = DATA_DIR / "raw" / str(batch_id) / f"dt={report_date}"
-        for path in sorted(directory.glob("*.parquet")):
-            for chunk in pq.ParquetFile(path).iter_batches(batch_size=2048):
-                yield from chunk.to_pylist()
+        root = f"{MINIO_BUCKET}/{batch_id}/dt={report_date}"
+        if not fs.exists(root):
+            continue
+        for path in sorted(fs.glob(f"{root}/*.parquet")):
+            with fs.open(path, "rb") as f:
+                for chunk in pq.ParquetFile(f).iter_batches(batch_size=2048):
+                    yield from chunk.to_pylist()
 
 
 def run_day(report_date, batches=None):
@@ -284,7 +295,7 @@ def validate_day(report_date):
 def aggregate_day(report_date):
     """Verify Parquet archive integrity for report_date."""
     batches = fetch_all("SELECT batch_id, max_event_ts, rows_valid, archive_manifest FROM pipeline_batches ORDER BY batch_id")
-    paths = verified_paths(DATA_DIR, batches, report_date)
+    paths = verified_paths(batches, report_date)
     log("batch", "archive_verified", report_date=report_date, paths=len(paths))
 
 

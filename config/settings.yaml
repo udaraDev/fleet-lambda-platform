@@ -1,4 +1,4 @@
-﻿# Fleet Lambda Platform — Central Configuration
+# Fleet Lambda Platform — Central Configuration
 # All thresholds, intervals, and simulation parameters are defined here.
 # Override any value with an environment variable of the same name (uppercased).
 # This file is the single source of truth for tunable constants.
@@ -45,6 +45,12 @@ pipeline:
 
   # Grace period for /health/reports to return processing at day boundaries.
   health_grace_minutes: 3
+
+minio:
+  endpoint: "http://localhost:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  bucket: "fleet-raw"
 
 serving:
   # Maximum micro-batch size allowed through to serving writes.

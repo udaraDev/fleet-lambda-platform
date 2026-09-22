@@ -13,11 +13,18 @@ def session():
     global _session
     if _session is None:
         from pyspark.sql import SparkSession
+        from common.settings import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
         _session = (SparkSession.builder.master("local[2]").appName("fleet-daily-reconciliation")
                     .config("spark.sql.session.timeZone", "UTC")
                     .config("spark.sql.ansi.enabled", "true")
                     .config("spark.sql.shuffle.partitions", "2")
-                    .config("spark.ui.enabled", "false").getOrCreate())
+                    .config("spark.ui.enabled", "false")
+                    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+                    .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
+                    .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
+                    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+                    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+                    .getOrCreate())
         _session.sparkContext.setLogLevel("WARN")
     return _session
 
