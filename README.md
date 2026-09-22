@@ -78,6 +78,8 @@ successful setup; this is expected. Other services should remain running.
 - Batch/report health: <http://localhost:8001/health/reports>
 - Metrics export: <http://localhost:8001/metrics>
 - Available report dates: <http://localhost:8001/reports/daily>
+- Daily profitability: <http://localhost:8001/reports/daily/2026-03-01>
+- Confirmed loss-making vehicles: <http://localhost:8001/reports/daily/2026-03-01/unprofitable>
 - Airflow: <http://localhost:8080> (`admin` / `fleet_demo` by default).
 
 Credentials are for a local classroom demo. Ports bind only to localhost; Kafka
@@ -249,6 +251,7 @@ regenerated. Use [DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) for the prepared live d
 - [Spark foreachBatch](https://spark.apache.org/docs/3.5.6/structured-streaming-programming-guide.html)
 - [Airflow container setup](https://airflow.apache.org/docs/apache-airflow/2.10.5/howto/docker-compose/index.html)
 - [Airflow database requirements](https://airflow.apache.org/docs/apache-airflow/2.10.5/howto/set-up-database.html)
+- Architecture decision records: [docs/adr/](docs/adr/)
 
 ## Author
 

@@ -1,0 +1,29 @@
+﻿groups:
+  - name: fleet_alerts
+    rules:
+      - alert: FleetPipelineNoData
+        expr: fleet_pipeline_healthy == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fleet pipeline has no recent data"
+          description: "No telemetry events received in the last 2 minutes. Producer may be down."
+
+      - alert: FleetHighRejectionRate
+        expr: fleet_events_rejected_total / (fleet_events_ingested_total + 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High event rejection rate"
+          description: "More than 5% of events are being rejected. Check stream_conflicts table."
+
+      - alert: FleetLastEventStale
+        expr: fleet_last_event_age_seconds > 120
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Last telemetry event is stale"
+          description: "The most recent event is more than 120 seconds old."

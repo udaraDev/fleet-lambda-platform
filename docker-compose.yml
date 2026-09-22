@@ -10,6 +10,7 @@ x-app-env: &app-env
   NO_DATA_SECONDS: ${NO_DATA_SECONDS:-120}
   DQ_FAILURE_THRESHOLD: ${DQ_FAILURE_THRESHOLD:-0.05}
   MAX_CHANGED_DATES_PER_RUN: ${MAX_CHANGED_DATES_PER_RUN:-5}
+  PROMETHEUS_URL: http://prometheus:9090
 
 x-app: &app
   image: fleet-platform:dev
@@ -85,9 +86,18 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    entrypoint: [/opt/kafka/bin/kafka-topics.sh]
-    command: [--bootstrap-server, 'kafka:9092', --create, --if-not-exists, --topic, trip-events,
-              --partitions, '3', --replication-factor, '1', --config, retention.ms=604800000]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic trip-events \
+          --partitions 3 --replication-factor 1 \
+          --config retention.ms=604800000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists --topic trip-events-dead-letter \
+          --partitions 1 --replication-factor 1 \
+          --config retention.ms=604800000
+        echo "Topics created."
 
   data-init:
     image: python:3.11-slim-bookworm
@@ -174,8 +184,44 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-fleet_demo}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-3000}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - '127.0.0.1:${GRAFANA_PORT:-3000}:3000'
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   fleet-data:
   postgres-data:
   kafka-data:
   airflow-logs:
+  prometheus-data:
+  grafana-data:

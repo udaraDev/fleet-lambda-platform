@@ -11,9 +11,35 @@ from collections import defaultdict
 from psycopg2.extras import Json, execute_values
 
 from common.domain import parse_timestamp
-
 from common.events import EVENT_FIELDS
+from common.settings import DEAD_LETTER_TOPIC
 
+
+def dead_letter_send(producer, raw_value: str, error_reason: str,
+                     partition: int = None, offset: int = None,
+                     batch_id: int = None, cur=None):
+    """Publish a malformed event to the dead-letter Kafka topic and optionally
+    record it in stream_dead_letters for SQL diagnostics.
+
+    `producer` must be a kafka-python KafkaProducer (or None for unit tests).
+    `cur` is an open psycopg2 cursor; pass None to skip the DB mirror.
+    """
+    if producer is not None:
+        try:
+            producer.send(DEAD_LETTER_TOPIC,
+                          value=json.dumps({"raw": raw_value, "error": error_reason,
+                                            "partition": partition, "offset": offset}).encode())
+        except Exception:
+            pass  # Never let dead-letter publishing crash the main pipeline.
+    if cur is not None:
+        try:
+            cur.execute("""
+                INSERT INTO stream_dead_letters
+                    (batch_id, kafka_partition, kafka_offset, raw_value, error_reason)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (batch_id, partition, offset, raw_value, error_reason))
+        except Exception:
+            pass
 
 def fingerprint(item):
     canonical = {k: item[k] for k in EVENT_FIELDS}
@@ -113,4 +139,68 @@ def bulk_serve(cur, events, batch_id):
     execute_values(cur, """INSERT INTO stream_event_keys
         (event_id,fingerprint,event_ts,vehicle_id,trip_id,batch_id) VALUES %s ON CONFLICT DO NOTHING""",
         [(e["event_id"], fingerprint(e), e["event_ts"], e["vehicle_id"], e["trip_id"], batch_id) for e in accepted])
+
+    # --- rt_zone_metrics: windowed zone aggregates (updated every micro-batch) ---
+    # Window start is truncated to the nearest minute using the max event_ts in this batch.
+    if accepted:
+        from datetime import timezone as _tz
+        from collections import Counter as _Counter
+        max_ts = max(parse_timestamp(e["event_ts"]) for e in accepted)
+        window_start = max_ts.replace(second=0, microsecond=0)
+        # Use current state (after writes) for zone counts
+        cur.execute("""SELECT zone, count(*) AS reporting,
+                           count(*) FILTER (WHERE status <> 'idle') AS active,
+                           count(*) FILTER (WHERE status = 'idle')::float / NULLIF(count(*),0) AS idle_ratio
+                       FROM rt_vehicle_state GROUP BY zone""")
+        zone_state = {r[0]: r[1:] for r in cur.fetchall()}
+        cur.execute("""SELECT zone, count(*) AS trips, COALESCE(sum(fare_cents),0) AS earnings
+                       FROM completed_trips
+                       WHERE completed_at >= %s - interval '1 minute'
+                       GROUP BY zone""", (max_ts,))
+        zone_trips = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+        all_zones = set(zone_state) | set(zone_trips)
+        if all_zones:
+            execute_values(cur, """INSERT INTO rt_zone_metrics
+                (window_start, zone, active_vehicles, idle_ratio, trips, earnings_cents, updated_at)
+                VALUES %s ON CONFLICT (window_start, zone) DO UPDATE SET
+                active_vehicles=EXCLUDED.active_vehicles, idle_ratio=EXCLUDED.idle_ratio,
+                trips=EXCLUDED.trips, earnings_cents=EXCLUDED.earnings_cents, updated_at=now()""",
+                [(window_start, z,
+                  zone_state.get(z, (0, None, None))[1] or 0,
+                  zone_state.get(z, (0, None, None))[2],
+                  zone_trips.get(z, (0, 0))[0],
+                  zone_trips.get(z, (0, 0))[1])
+                 for z in all_zones])
+
+    # --- rt_alerts: raise/resolve idle-threshold alerts ---
+    from common.settings import IDLE_ALERT_MINUTES
+    if changed or accepted:
+        # Check current idle state for all vehicles that changed in this batch
+        vehicles_to_check = list({v for v in changed} | {e["vehicle_id"] for e in accepted})
+        if vehicles_to_check:
+            cur.execute("""SELECT vehicle_id, idle_since FROM rt_vehicle_state
+                           WHERE vehicle_id = ANY(%s)""", (vehicles_to_check,))
+            idle_states = {r[0]: r[1] for r in cur.fetchall()}
+            cur.execute("""SELECT vehicle_id, alert_id FROM rt_alerts
+                           WHERE vehicle_id = ANY(%s) AND resolved_at IS NULL
+                           AND alert_type = 'idle_threshold'""", (vehicles_to_check,))
+            open_alerts = {r[0]: r[1] for r in cur.fetchall()}
+            now_utc = max_ts if accepted else None
+            if now_utc is None:
+                from datetime import datetime as _dt
+                now_utc = _dt.now(_tz.utc)
+            for vid in vehicles_to_check:
+                idle_since = idle_states.get(vid)
+                if idle_since and (now_utc - idle_since).total_seconds() >= IDLE_ALERT_MINUTES * 60:
+                    if vid not in open_alerts:
+                        idle_min = (now_utc - idle_since).total_seconds() / 60
+                        cur.execute("""INSERT INTO rt_alerts
+                            (vehicle_id, alert_type, severity, idle_minutes, payload)
+                            VALUES (%s, 'idle_threshold', 'warning', %s, %s)""",
+                            (vid, idle_min, Json({"idle_since": idle_since.isoformat()})))
+                elif vid in open_alerts:
+                    # Vehicle is no longer idle — resolve the open alert
+                    cur.execute("""UPDATE rt_alerts SET resolved_at = now()
+                                   WHERE alert_id = %s""", (open_alerts[vid],))
+
     return len(rejected)

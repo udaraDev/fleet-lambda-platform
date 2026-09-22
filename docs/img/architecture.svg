@@ -1,0 +1,177 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" font-family="Consolas,monospace">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#7EE787"/>
+    </marker>
+    <marker id="arr2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#F4845F"/>
+    </marker>
+    <marker id="arr3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#58A6FF"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="720" fill="#0D1117"/>
+
+  <!-- Title -->
+  <text x="600" y="38" text-anchor="middle" font-size="20" font-weight="bold" fill="#F0F6FC">Fleet Lambda Platform — EC8203</text>
+  <text x="600" y="58" text-anchor="middle" font-size="13" fill="#8B949E">1 real minute = 1 simulated hour  |  12 vehicles  |  Kafka → Spark → PostgreSQL → FastAPI</text>
+
+  <!-- ===== SPEED LAYER ===== -->
+  <rect x="20" y="75" width="1160" height="175" rx="8" fill="#161B22" stroke="#1F6FEB" stroke-width="1.5"/>
+  <text x="35" y="95" font-size="12" font-weight="bold" fill="#58A6FF">SPEED LAYER</text>
+
+  <!-- Producer -->
+  <rect x="40" y="105" width="130" height="55" rx="6" fill="#1F4068" stroke="#58A6FF" stroke-width="1"/>
+  <text x="105" y="128" text-anchor="middle" font-size="11" fill="#C9D1D9">Telemetry</text>
+  <text x="105" y="143" text-anchor="middle" font-size="11" fill="#C9D1D9">Producer</text>
+  <text x="105" y="156" text-anchor="middle" font-size="10" fill="#8B949E">producer_stream.py</text>
+
+  <!-- Kafka -->
+  <rect x="220" y="95" width="145" height="130" rx="6" fill="#21262D" stroke="#F4845F" stroke-width="1.5"/>
+  <text x="292" y="120" text-anchor="middle" font-size="12" font-weight="bold" fill="#F4845F">Kafka (KRaft)</text>
+  <text x="292" y="138" text-anchor="middle" font-size="10" fill="#7EE787">trip-events</text>
+  <text x="292" y="152" text-anchor="middle" font-size="10" fill="#8B949E">3 partitions</text>
+  <text x="292" y="166" text-anchor="middle" font-size="10" fill="#8B949E">key=vehicle_id</text>
+  <rect x="237" y="178" width="110" height="22" rx="4" fill="#3D1F00" stroke="#F4845F" stroke-width="1"/>
+  <text x="292" y="193" text-anchor="middle" font-size="10" fill="#F4845F">dead-letter topic</text>
+
+  <!-- Spark Streaming -->
+  <rect x="415" y="105" width="165" height="55" rx="6" fill="#1B3A2B" stroke="#3FB950" stroke-width="1"/>
+  <text x="497" y="128" text-anchor="middle" font-size="11" fill="#C9D1D9">Spark Structured</text>
+  <text x="497" y="143" text-anchor="middle" font-size="11" fill="#C9D1D9">Streaming</text>
+  <text x="497" y="156" text-anchor="middle" font-size="10" fill="#8B949E">streaming/job.py</text>
+
+  <!-- Parquet Store -->
+  <rect x="415" y="180" width="165" height="50" rx="6" fill="#2D1A00" stroke="#D29922" stroke-width="1"/>
+  <text x="497" y="200" text-anchor="middle" font-size="11" fill="#D29922">Parquet Archive</text>
+  <text x="497" y="215" text-anchor="middle" font-size="10" fill="#8B949E">/data/raw/dt=DATE/</text>
+  <text x="497" y="228" text-anchor="middle" font-size="10" fill="#8B949E">SHA-256 manifest</text>
+
+  <!-- PostgreSQL Speed Tables -->
+  <rect x="635" y="95" width="180" height="130" rx="6" fill="#1A1B3A" stroke="#58A6FF" stroke-width="1"/>
+  <text x="725" y="120" text-anchor="middle" font-size="12" font-weight="bold" fill="#58A6FF">PostgreSQL</text>
+  <text x="725" y="138" text-anchor="middle" font-size="10" fill="#7EE787">rt_vehicle_state</text>
+  <text x="725" y="152" text-anchor="middle" font-size="10" fill="#7EE787">completed_trips</text>
+  <text x="725" y="166" text-anchor="middle" font-size="10" fill="#7EE787">rt_zone_metrics</text>
+  <text x="725" y="180" text-anchor="middle" font-size="10" fill="#7EE787">rt_alerts</text>
+  <text x="725" y="194" text-anchor="middle" font-size="10" fill="#7EE787">stream_event_keys</text>
+  <text x="725" y="208" text-anchor="middle" font-size="10" fill="#7EE787">stream_dead_letters</text>
+
+  <!-- Arrows: Speed Layer -->
+  <line x1="170" y1="132" x2="218" y2="132" stroke="#7EE787" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="365" y1="132" x2="413" y2="132" stroke="#7EE787" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="580" y1="132" x2="633" y2="132" stroke="#7EE787" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="497" y1="160" x2="497" y2="178" stroke="#D29922" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== BATCH LAYER ===== -->
+  <rect x="20" y="268" width="1160" height="210" rx="8" fill="#161B22" stroke="#D29922" stroke-width="1.5"/>
+  <text x="35" y="288" font-size="12" font-weight="bold" fill="#D29922">BATCH LAYER</text>
+
+  <!-- Expense Producer -->
+  <rect x="40" y="298" width="130" height="55" rx="6" fill="#3D2900" stroke="#D29922" stroke-width="1"/>
+  <text x="105" y="320" text-anchor="middle" font-size="11" fill="#C9D1D9">Expense</text>
+  <text x="105" y="335" text-anchor="middle" font-size="11" fill="#C9D1D9">Producer</text>
+  <text x="105" y="348" text-anchor="middle" font-size="10" fill="#8B949E">producer_batch.py</text>
+
+  <!-- CSV Landing -->
+  <rect x="220" y="298" width="130" height="55" rx="6" fill="#21262D" stroke="#D29922" stroke-width="1"/>
+  <text x="285" y="320" text-anchor="middle" font-size="11" fill="#C9D1D9">CSV Landing</text>
+  <text x="285" y="335" text-anchor="middle" font-size="11" fill="#C9D1D9">Zone</text>
+  <text x="285" y="348" text-anchor="middle" font-size="10" fill="#8B949E">expenses_DATE.csv</text>
+
+  <!-- Airflow DAG -->
+  <rect x="400" y="280" width="220" height="180" rx="6" fill="#1A1B3A" stroke="#BC8CFF" stroke-width="1.5"/>
+  <text x="510" y="302" text-anchor="middle" font-size="12" font-weight="bold" fill="#BC8CFF">Airflow DAG (7 tasks)</text>
+  <text x="510" y="320" text-anchor="middle" font-size="10" fill="#C9D1D9">1. wait_for_expense_file</text>
+  <text x="510" y="336" text-anchor="middle" font-size="10" fill="#C9D1D9">2. validate_expense_file</text>
+  <text x="510" y="352" text-anchor="middle" font-size="10" fill="#C9D1D9">3. aggregate_trips</text>
+  <text x="510" y="368" text-anchor="middle" font-size="10" fill="#C9D1D9">4. join_costs_compute_profit</text>
+  <text x="510" y="384" text-anchor="middle" font-size="10" fill="#C9D1D9">5. publish_serving</text>
+  <text x="510" y="400" text-anchor="middle" font-size="10" fill="#C9D1D9">6. render_report</text>
+  <text x="510" y="416" text-anchor="middle" font-size="10" fill="#C9D1D9">7. emit_metrics</text>
+  <text x="510" y="434" text-anchor="middle" font-size="10" fill="#8B949E">retries=2  |  schedule="* * * * *"</text>
+  <text x="510" y="450" text-anchor="middle" font-size="10" fill="#8B949E">max_active_runs=1</text>
+
+  <!-- Spark Batch -->
+  <rect x="672" y="298" width="140" height="55" rx="6" fill="#1B3A2B" stroke="#3FB950" stroke-width="1"/>
+  <text x="742" y="320" text-anchor="middle" font-size="11" fill="#C9D1D9">Spark Batch</text>
+  <text x="742" y="335" text-anchor="middle" font-size="11" fill="#C9D1D9">Reconcile</text>
+  <text x="742" y="348" text-anchor="middle" font-size="10" fill="#8B949E">spark_reconcile.py</text>
+
+  <!-- PostgreSQL Batch Tables -->
+  <rect x="862" y="280" width="180" height="165" rx="6" fill="#1A1B3A" stroke="#58A6FF" stroke-width="1"/>
+  <text x="952" y="305" text-anchor="middle" font-size="12" font-weight="bold" fill="#58A6FF">PostgreSQL</text>
+  <text x="952" y="323" text-anchor="middle" font-size="10" fill="#7EE787">daily_vehicle_profit</text>
+  <text x="952" y="339" text-anchor="middle" font-size="10" fill="#7EE787">daily_zone_summary</text>
+  <text x="952" y="355" text-anchor="middle" font-size="10" fill="#7EE787">daily_report_status</text>
+  <text x="952" y="371" text-anchor="middle" font-size="10" fill="#7EE787">dq_quarantine</text>
+  <text x="952" y="387" text-anchor="middle" font-size="10" fill="#7EE787">pipeline_runs</text>
+  <text x="952" y="410" text-anchor="middle" font-size="10" fill="#8B949E">Reports:</text>
+  <text x="952" y="426" text-anchor="middle" font-size="10" fill="#D29922">JSON + CSV + HTML</text>
+  <text x="952" y="442" text-anchor="middle" font-size="10" fill="#D29922">+ Parquet</text>
+
+  <!-- Arrows: Batch Layer -->
+  <line x1="170" y1="325" x2="218" y2="325" stroke="#D29922" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="350" y1="325" x2="398" y2="360" stroke="#D29922" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="497" y1="232" x2="497" y2="278" stroke="#D29922" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+  <line x1="620" y1="360" x2="670" y2="325" stroke="#D29922" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="812" y1="325" x2="860" y2="350" stroke="#7EE787" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ===== SERVING LAYER ===== -->
+  <rect x="20" y="495" width="1160" height="195" rx="8" fill="#161B22" stroke="#3FB950" stroke-width="1.5"/>
+  <text x="35" y="515" font-size="12" font-weight="bold" fill="#3FB950">SERVING LAYER</text>
+
+  <!-- FastAPI -->
+  <rect x="40" y="525" width="160" height="140" rx="6" fill="#1B3A2B" stroke="#3FB950" stroke-width="1.5"/>
+  <text x="120" y="549" text-anchor="middle" font-size="13" font-weight="bold" fill="#3FB950">FastAPI</text>
+  <text x="120" y="567" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /metrics/fleet</text>
+  <text x="120" y="581" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /metrics/zones</text>
+  <text x="120" y="595" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /alerts/active</text>
+  <text x="120" y="609" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /reports/daily/{dt}</text>
+  <text x="120" y="623" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /reports/.../unprofitable</text>
+  <text x="120" y="637" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /health/pipeline</text>
+  <text x="120" y="651" text-anchor="middle" font-size="10" fill="#C9D1D9">GET /metrics  (Prometheus)</text>
+
+  <!-- Dashboard -->
+  <rect x="250" y="525" width="140" height="65" rx="6" fill="#1F4068" stroke="#58A6FF" stroke-width="1"/>
+  <text x="320" y="549" text-anchor="middle" font-size="12" font-weight="bold" fill="#58A6FF">Dashboard</text>
+  <text x="320" y="565" text-anchor="middle" font-size="10" fill="#C9D1D9">Business HTML view</text>
+  <text x="320" y="579" text-anchor="middle" font-size="10" fill="#8B949E">GET /</text>
+
+  <!-- Prometheus -->
+  <rect x="250" y="610" width="140" height="55" rx="6" fill="#3D1F00" stroke="#F4845F" stroke-width="1.5"/>
+  <text x="320" y="632" text-anchor="middle" font-size="12" font-weight="bold" fill="#F4845F">Prometheus</text>
+  <text x="320" y="648" text-anchor="middle" font-size="10" fill="#C9D1D9">Scrapes /metrics</text>
+  <text x="320" y="660" text-anchor="middle" font-size="10" fill="#8B949E">port 9090</text>
+
+  <!-- Grafana -->
+  <rect x="430" y="525" width="140" height="140" rx="6" fill="#2D1B00" stroke="#F78166" stroke-width="1.5"/>
+  <text x="500" y="549" text-anchor="middle" font-size="12" font-weight="bold" fill="#F78166">Grafana</text>
+  <text x="500" y="567" text-anchor="middle" font-size="10" fill="#C9D1D9">Fleet Overview panel</text>
+  <text x="500" y="581" text-anchor="middle" font-size="10" fill="#C9D1D9">Pipeline Health panel</text>
+  <text x="500" y="595" text-anchor="middle" font-size="10" fill="#C9D1D9">Alert rules:</text>
+  <text x="500" y="609" text-anchor="middle" font-size="10" fill="#F4845F">- no data in 2 min</text>
+  <text x="500" y="623" text-anchor="middle" font-size="10" fill="#F4845F">- DQ failure</text>
+  <text x="500" y="637" text-anchor="middle" font-size="10" fill="#F4845F">- idle vehicle spike</text>
+  <text x="500" y="655" text-anchor="middle" font-size="10" fill="#8B949E">port 3000</text>
+
+  <!-- Arrows: Serving Layer -->
+  <line x1="952" y1="445" x2="120" y2="523" stroke="#58A6FF" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr3)"/>
+  <line x1="725" y1="225" x2="120" y2="523" stroke="#58A6FF" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr3)"/>
+  <line x1="200" y1="595" x2="248" y2="595" stroke="#3FB950" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="200" y1="595" x2="248" y2="555" stroke="#3FB950" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="320" y1="665" x2="430" y2="590" stroke="#F4845F" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+  <!-- Legend -->
+  <rect x="640" y="525" width="530" height="140" rx="6" fill="#21262D" stroke="#30363D" stroke-width="1"/>
+  <text x="905" y="548" text-anchor="middle" font-size="12" font-weight="bold" fill="#F0F6FC">Key Design Decisions</text>
+  <text x="665" y="568" font-size="10" fill="#C9D1D9">• Lambda Architecture: separate speed + batch paths</text>
+  <text x="665" y="584" font-size="10" fill="#C9D1D9">• Speed path: indicative results, sub-minute latency</text>
+  <text x="665" y="600" font-size="10" fill="#C9D1D9">• Batch path: authoritative, idempotent, fingerprint-gated</text>
+  <text x="665" y="616" font-size="10" fill="#C9D1D9">• PostgreSQL advisory locks prevent concurrent rewrites</text>
+  <text x="665" y="632" font-size="10" fill="#C9D1D9">• Dead-letter topic isolates malformed events</text>
+  <text x="665" y="648" font-size="10" fill="#C9D1D9">• SHA-256 export fingerprint verifies report integrity</text>
+  <text x="665" y="664" font-size="10" fill="#C9D1D9">• DQ gate fails DAG if rejection rate exceeds 5%</text>
+</svg>

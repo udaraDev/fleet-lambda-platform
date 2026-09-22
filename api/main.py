@@ -201,6 +201,30 @@ def daily_report(report_date: date):
             "publication": snapshot[0]['publication'] or {"export_status": "legacy_unverified"}}
 
 
+@app.get("/reports/daily/{report_date}/unprofitable")
+def unprofitable_vehicles(report_date: date):
+    """Return vehicles that are loss-making for a given simulated date, worst first.
+
+    A vehicle appears here only when its profit is both known (expenses present,
+    no telemetry conflict) and negative.  Vehicles with unknown profit due to
+    missing or conflicting data are excluded — unknown is not the same as zero.
+    """
+    rows = fetch_all("""
+        SELECT vehicle_id, trips, revenue_cents,
+               fuel_cents, maintenance_cents, profit_cents, margin_pct,
+               reconciliation_status
+        FROM daily_vehicle_profit
+        WHERE dt = %s AND is_unprofitable = true
+        ORDER BY profit_cents ASC NULLS LAST
+    """, (report_date,))
+    if not rows:
+        raise HTTPException(404, "No vehicles with confirmed losses for that simulated date")
+    return {"date": report_date, "currency": "LKR", "money_unit": "cents",
+            "count": len(rows), "vehicles": rows}
+
+
+
+
 @app.get("/metrics", response_class=PlainTextResponse)
 def metrics():
     status = pipeline_status()

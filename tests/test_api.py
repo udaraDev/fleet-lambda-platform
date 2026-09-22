@@ -102,3 +102,31 @@ class ApiTests(unittest.TestCase):
         ])
         self.assertEqual(self.client.get("/health/reports").status_code, 200)
 
+    @patch("api.main.fetch_all", return_value=[])
+    def test_unprofitable_returns_404_when_no_losses(self, fetch):
+        """When no vehicles are loss-making (or no report exists), return 404."""
+        self.assertEqual(self.client.get("/reports/daily/2026-03-01/unprofitable").status_code, 404)
+
+    @patch("api.main.fetch_all")
+    def test_unprofitable_returns_ranked_vehicles(self, fetch):
+        """Unprofitable endpoint returns vehicles ordered worst-loss first with correct keys."""
+        fetch.return_value = [
+            {"vehicle_id": "V-004", "trips": 0, "revenue_cents": 0,
+             "fuel_cents": 180000, "maintenance_cents": 20000,
+             "profit_cents": -200000, "margin_pct": None,
+             "reconciliation_status": "complete"},
+            {"vehicle_id": "V-001", "trips": 2, "revenue_cents": 65000,
+             "fuel_cents": 180000, "maintenance_cents": 20000,
+             "profit_cents": -135000, "margin_pct": -207.69,
+             "reconciliation_status": "complete"},
+        ]
+        response = self.client.get("/reports/daily/2026-03-01/unprofitable")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["count"], 2)
+        self.assertEqual(body["money_unit"], "cents")
+        # Worst loss first
+        self.assertEqual(body["vehicles"][0]["vehicle_id"], "V-004")
+        self.assertEqual(body["vehicles"][1]["vehicle_id"], "V-001")
+        # Unknown profit correctly propagated
+        self.assertIsNone(body["vehicles"][0]["margin_pct"])

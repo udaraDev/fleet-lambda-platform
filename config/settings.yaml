@@ -1,0 +1,63 @@
+﻿# Fleet Lambda Platform — Central Configuration
+# All thresholds, intervals, and simulation parameters are defined here.
+# Override any value with an environment variable of the same name (uppercased).
+# This file is the single source of truth for tunable constants.
+
+simulation:
+  # How many real seconds equal one simulated day.
+  # 300 = 1 real minute = 1 simulated hour.
+  sim_day_seconds: 300
+
+  # How often the telemetry producer emits one event per vehicle (real seconds).
+  event_interval_seconds: 2.0
+
+  # Number of vehicles in the simulated fleet.
+  vehicle_count: 12
+
+  # Simulation start date (UTC). All event timestamps begin here.
+  start_date: "2026-03-01"
+
+kafka:
+  bootstrap_servers: "kafka:9092"
+  topic: "trip-events"
+  partitions: 3
+  # Malformed events that fail schema validation are published here.
+  dead_letter_topic: "trip-events-dead-letter"
+  retention_ms: 604800000   # 7 days
+
+data_quality:
+  # Maximum fraction of expense rows that may be rejected before the DAG fails.
+  # 0.05 = 5% any file with more than 5% bad rows fails the pipeline loudly.
+  dq_failure_threshold: 0.05
+
+  # Maximum plausible distance in km for one vehicle per day.
+  max_distance_km: 1000.0
+
+pipeline:
+  # Maximum number of dates to reprocess per Airflow trigger.
+  max_changed_dates_per_run: 5
+
+  # A pipeline health check returns 503 if the last event is older than this.
+  no_data_seconds: 120
+
+  # A pipeline_runs row is considered stalled if it has been running longer than this.
+  stall_minutes: 20
+
+  # Grace period for /health/reports to return processing at day boundaries.
+  health_grace_minutes: 3
+
+serving:
+  # Maximum micro-batch size allowed through to serving writes.
+  max_batch_rows: 2500
+
+  # Idle alert threshold: vehicles idle longer than this appear in /alerts/active.
+  idle_alert_minutes: 5
+
+database:
+  url: "postgresql://fleet:fleet_dev@postgres:5432/fleet"
+
+storage:
+  data_dir: "/data"
+  # Report algorithm version - bump when the profit formula changes.
+  # A version mismatch triggers automatic restatement of all published reports.
+  algorithm_version: 4
