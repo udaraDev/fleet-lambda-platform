@@ -29,6 +29,16 @@ def event_error(raw):
 
 
 def process_batch(frame, batch_id):
+    # Fence archive writes as well as database writes. Independent checkpoints must
+    # never share this dataset; concurrent callbacks are rejected before file I/O.
+    with connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(8203, -1)")
+        if not cur.fetchone()[0]:
+            raise RuntimeError("Another archive writer owns this dataset")
+        return _process_batch(frame, batch_id)
+
+
+def _process_batch(frame, batch_id):
     from pyspark.sql import functions as F
 
     if frame.isEmpty():

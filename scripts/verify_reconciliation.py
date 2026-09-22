@@ -52,6 +52,7 @@ def verify():
         with connection() as conn, conn.cursor() as cur:
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "001_schema.sql").read_text())
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "002_integrity.sql").read_text())
+            cur.execute((Path(__file__).resolve().parents[1] / "sql" / "003_completion.sql").read_text())
         from streaming.sink import bulk_serve
         first = dict(make_event(1, 5, SIM_START + timedelta(days=3), SIM_START), time_of_day_bucket="night")
         with connection() as conn, conn.cursor() as cur:
@@ -62,6 +63,8 @@ def verify():
             assert bulk_serve(cur, [dict(first, fare_cents=1)], 12) > 0
             cur.execute("SELECT count(*) FROM completed_trips")
             assert cur.fetchone()[0] == 0, "Conflicting fare remained authoritative"
+            cur.execute("SELECT count(*) FROM rt_vehicle_state WHERE vehicle_id=%s", (first['vehicle_id'],))
+            assert cur.fetchone()[0] == 0, "Conflicted event remained the live state"
             good = dict(make_event(2, 11, SIM_START + timedelta(days=3), SIM_START), time_of_day_bucket="night")
             assert bulk_serve(cur, [good], 13) == 0
             cur.execute("SELECT count(*) FROM completed_trips")
@@ -120,6 +123,20 @@ def verify():
                 assert edge_output[3]["profit_cents"] == -1380000
                 assert batch.run_day(day)
                 assert report() == original, "Rerun changed identical results"
+                target = root / "reports" / f"profitability_{day}.json"
+                # Only corrupt this disposable test export, never the live volume.
+                target.write_text('{"corrupted": true}')
+                assert batch.run_day(day) is True, "Corrupted published export was not repaired"
+                assert json.loads(target.read_text())['vehicles'][0]['trips'] == 25
+                target.unlink()
+                assert batch.run_day(day) is True, "Missing published export was not repaired"
+                assert target.is_file()
+                equivalent = [dict(e, event_ts=e['event_ts'].replace('+00:00', 'Z')) for e in events]
+                parity_path = root / 'timezone-parity.parquet'
+                pq.write_table(pa.Table.from_pylist(events + equivalent), parity_path)
+                parity, _ = aggregate([str(parity_path)], clean_costs, day, batch.vehicles())
+                assert all(r['reconciliation_status'] == 'complete' for r in parity)
+                assert [r['trips'] for r in parity] == [25,25,25,0]
 
                 expenses[0]["fuel_cost"] = "1900.00"
                 write_expenses(expenses)
@@ -210,7 +227,8 @@ def verify():
                 "corrected expense", "bad-data quarantine", "preserve last good report",
                 "registered vehicle visibility", "unknown missing cost", "concurrent-run lock", "missing archive safety",
                 "bulk cross-batch replay", "conflict recovery", "missing telemetry", "native stream validation",
-                "stream commit retry", "partial-day gap", "Spark conflict detection", "export failure recovery"
+                "stream commit retry", "partial-day gap", "Spark conflict detection", "export failure recovery",
+                "missing export recovery", "corrupt export recovery", "timestamp identity parity", "conflicted state removal"
             ]}, indent=2))
     finally:
         try:

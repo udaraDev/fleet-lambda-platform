@@ -47,19 +47,21 @@ class ApiTests(unittest.TestCase):
 
     @patch("api.main.fetch_all")
     def test_report_preserves_unknown_profit(self, fetch):
-        fetch.return_value = [{"vehicle_id": "V-001", "profit_cents": None,
-                               "reconciliation_status": "missing_expenses"}]
+        fetch.return_value = [{"vehicles": [{"vehicle_id": "V-001", "profit_cents": None,
+                               "reconciliation_status": "missing_expenses"}], "publication": {"run_id": "one-version"}}]
         response = self.client.get("/reports/daily/2026-03-01")
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.json()["vehicles"][0]["profit_cents"])
         self.assertEqual(response.json()["money_unit"], "cents")
+        self.assertEqual(fetch.call_count, 1, "Rows and metadata must share one statement snapshot")
+        self.assertEqual(response.json()['publication']['run_id'], 'one-version')
 
     @patch("api.main.fetch_all")
     def test_report_health_detects_failed_batch_with_fresh_report(self, fetch):
         from datetime import date
         fetch.side_effect = [[{"failed_dates": 1, "stalled_dates": 0}],
                              [{"latest_report": date(2026, 3, 1), "pending_exports": 0}],
-                             [{"expected_report": date(2026, 3, 1)}]]
+                             [{"expected_report": date(2026, 3, 1)}], [], [{'n': 0}]]
         response = self.client.get("/health/reports")
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.json()["healthy"])
@@ -69,5 +71,5 @@ class ApiTests(unittest.TestCase):
         from datetime import date
         fetch.side_effect = [[{"failed_dates": 0, "stalled_dates": 0}],
                              [{"latest_report": date(2026, 3, 1), "pending_exports": 0}],
-                             [{"expected_report": date(2026, 3, 1)}]]
+                             [{"expected_report": date(2026, 3, 1)}], [], [{'n': 0}]]
         self.assertEqual(self.client.get("/health/reports").status_code, 200)

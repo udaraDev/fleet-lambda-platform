@@ -1,14 +1,22 @@
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 
 from common.db import fetch_all
 from common.logging_conf import log
 from common.settings import NO_DATA_SECONDS, VEHICLE_COUNT
+from common.settings import DATA_DIR
+from common.publication import ALGORITHM_VERSION, export_matches
 
 app = FastAPI(title="Fleet Lambda Platform", version="0.1.0")
+
+
+@app.get('/', response_class=HTMLResponse)
+def dashboard():
+    return Path(__file__).with_name('dashboard.html').read_text(encoding='utf-8')
 
 
 @app.middleware("http")
@@ -25,7 +33,11 @@ def health():
 
 def pipeline_status():
     summary = fetch_all("""SELECT
-        EXTRACT(EPOCH FROM (now() - max(committed_at) FILTER (WHERE rows_valid > 0))) AS last_event_age_seconds,
+        (SELECT GREATEST(EXTRACT(EPOCH FROM (now()-max(accepted_at))),
+            (SELECT EXTRACT(EPOCH FROM (now()-started_at)) FROM simulation_clock WHERE id=1)
+            - EXTRACT(EPOCH FROM (max(event_ts)-timestamptz '2026-03-01 00:00:00+00'))
+              * (SELECT day_seconds FROM simulation_clock WHERE id=1) / 86400.0)
+         FROM stream_event_keys) AS last_event_age_seconds,
         COALESCE(sum(rows_in), 0) AS rows_in,
         COALESCE(sum(rows_rejected), 0) AS rows_rejected
         FROM pipeline_batches""")[0]
@@ -60,12 +72,21 @@ def health_reports():
             count(*) FILTER (WHERE export_status <> 'published') AS pending_exports
             FROM daily_report_status""")[0]
         expected = fetch_all("SELECT max(max_event_ts)::date - 1 AS expected_report FROM pipeline_batches")[0]["expected_report"]
+        exports = fetch_all("SELECT dt,output_sha256,algorithm_version FROM daily_report_status WHERE export_status='published'")
+        bad_exports = sum(not export_matches(DATA_DIR / 'reports' / ('profitability_' + str(r['dt']) + '.json'), r['output_sha256']) for r in exports)
+        old_versions = sum(r['algorithm_version'] != ALGORITHM_VERSION for r in exports)
+        missing = fetch_all("""SELECT count(*) AS n FROM generate_series(date '2026-03-01',
+            %s::date,interval '1 day') AS d(dt) LEFT JOIN daily_report_status s ON s.dt=d.dt
+            WHERE s.dt IS NULL""", (expected,))[0]['n']
         healthy = (not summary["failed_dates"] and not summary["stalled_dates"] and
-                   not publication["pending_exports"] and expected is not None and
+                   not publication["pending_exports"] and not bad_exports and not old_versions and not missing and expected is not None and
                    publication["latest_report"] is not None and publication["latest_report"] >= expected)
         from fastapi.encoders import jsonable_encoder
         return JSONResponse(jsonable_encoder({"healthy": healthy, "status": "healthy" if healthy else "degraded",
-                            "expected_report": expected, **summary, **publication}), status_code=200 if healthy else 503)
+                            "expected_report": expected, "missing_dates": missing,
+                            "invalid_exports": bad_exports, "outdated_dates": old_versions,
+                            "algorithm_version": ALGORITHM_VERSION,
+                            **summary, **publication}), status_code=200 if healthy else 503)
     except Exception as exc:
         log("api", "report_health_unavailable", error=str(exc))
         return JSONResponse({"healthy": False, "status": "database_unavailable"}, status_code=503)
@@ -129,13 +150,16 @@ def report_dates():
 
 @app.get("/reports/daily/{report_date}")
 def daily_report(report_date: date):
-    rows = fetch_all("SELECT * FROM daily_vehicle_profit WHERE dt=%s ORDER BY profit_cents NULLS LAST,vehicle_id",
-                     (report_date,))
+    snapshot = fetch_all("""SELECT
+        (SELECT jsonb_agg(to_jsonb(p) ORDER BY profit_cents NULLS LAST,vehicle_id)
+         FROM daily_vehicle_profit p WHERE dt=%s) AS vehicles,
+        (SELECT to_jsonb(s)-'input_fingerprint' FROM daily_report_status s WHERE dt=%s) AS publication""",
+                     (report_date, report_date))
+    rows = snapshot[0]['vehicles'] if snapshot else None
     if not rows:
         raise HTTPException(404, "No reconciled report for that simulated date yet")
-    versions = fetch_all("SELECT run_id,export_status,coverage,updated_at FROM daily_report_status WHERE dt=%s", (report_date,))
     return {"date": report_date, "currency": "LKR", "money_unit": "cents", "vehicles": rows,
-            "publication": versions[0] if versions else {"export_status": "legacy_unverified"}}
+            "publication": snapshot[0]['publication'] or {"export_status": "legacy_unverified"}}
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

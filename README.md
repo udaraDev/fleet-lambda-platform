@@ -3,9 +3,9 @@
 EC8203 mini-project: live ride-hailing fleet metrics and daily reconciliation of
 trip revenue against fuel and maintenance expenses.
 
-**Status: first implementation increment.** See
-[implementation status](docs/IMPLEMENTATION_STATUS.md) for checks and remaining
-work from the [full project plan](PROJECT_PLAN.md).
+**Status: submission candidate.** The delivered scope and deliberate deferrals are
+recorded in [FINAL_SCOPE.md](docs/FINAL_SCOPE.md). PROJECT_PLAN.md is the original
+proposal and is not a claim that every optional component was implemented.
 
 The priority correctness upgrade is described in [priority fixes](docs/PRIORITY_FIXES.md).
 Batch aggregation now uses Spark; missing telemetry is explicitly incomplete,
@@ -70,6 +70,7 @@ The first build downloads large dependencies. Initialization services exit after
 successful setup; this is expected. Other services should remain running.
 
 - API documentation: <http://localhost:8001/docs>
+- Business results page: <http://localhost:8001/>
 - Live fleet metrics: <http://localhost:8001/metrics/fleet>
 - Zone metrics: <http://localhost:8001/metrics/zones>
 - Time-of-day earnings: <http://localhost:8001/metrics/time-of-day?report_date=2026-03-01>
@@ -223,11 +224,11 @@ New-Item -ItemType Directory -Force reports
 docker compose cp api:/data/reports/profitability_2026-03-01.json reports/
 ```
 
-## Remaining work and limitations
+## Deliberate limits
 
-Still planned: Spark event-time windows/watermarks, MinIO, separate raw/speed
-consumers, Grafana, Prometheus scraping/alerts,
-fault-injection switches, durable business alerts and final report/demo evidence.
+Formal Spark event-time windows/watermarks, MinIO, separate raw/speed consumers,
+Grafana/Prometheus servers, durable business-alert history and a distributed sink
+are explicitly deferred in FINAL_SCOPE.md. They are not described as completed.
 The Airflow batch uses Spark DataFrames for trip aggregation, conflicts, coverage
 and the expense join. PyArrow is used for archive metadata and test fixtures.
 
@@ -238,6 +239,8 @@ with only fleet-size summaries collected. It does not claim end-to-end exactly-o
 skip ticks. Idle detection follows observed state changes and does not reconstruct
 late historical sessions. Database and JSON publication are separate operations;
 a pending publication status exposes export failure until Airflow retries it.
+Published JSON is versioned and SHA-256 verified; missing or corrupted output is
+regenerated. Use [DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) for the prepared live demo.
 
 ## Technical references
 

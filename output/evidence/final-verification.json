@@ -1,0 +1,32 @@
+{
+  "review_date": "2026-09-22",
+  "unit_api_archive_tests": 39,
+  "isolated_spark_postgresql_checks": 23,
+  "clean_install": {
+    "passed": true,
+    "scope": "fresh named volumes on the same Docker host using built images",
+    "dag_import_errors": 0
+  },
+  "report_health": {
+    "healthy": true,
+    "algorithm_version": 4,
+    "report_dates": 209,
+    "missing_dates": 0,
+    "invalid_exports": 0,
+    "outdated_dates": 0,
+    "failed_dates": 0,
+    "stalled_dates": 0,
+    "pending_exports": 0
+  },
+  "result_quality": {
+    "complete_vehicle_days": 788,
+    "incomplete_telemetry_vehicle_days": 1720
+  },
+  "no_data_rule": {
+    "passed": true,
+    "degraded_http_status": 503,
+    "observed_stale_age_seconds": 126.051435,
+    "recovery_http_status": 200,
+    "recovered_event_age_seconds": 5.642402
+  }
+}

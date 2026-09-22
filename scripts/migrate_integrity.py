@@ -13,6 +13,7 @@ from common.settings import DATA_DIR
 def migrate():
     with connection() as conn, conn.cursor() as cur:
         cur.execute((Path(__file__).resolve().parents[1] / "sql" / "002_integrity.sql").read_text())
+        cur.execute((Path(__file__).resolve().parents[1] / "sql" / "003_completion.sql").read_text())
     for batch in fetch_all("SELECT batch_id,rows_valid FROM pipeline_batches WHERE archive_manifest IS NULL ORDER BY batch_id"):
         manifest = build_manifest(DATA_DIR / "raw" / str(batch["batch_id"]), batch["rows_valid"])
         with connection() as conn, conn.cursor() as cur:

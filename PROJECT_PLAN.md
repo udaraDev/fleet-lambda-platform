@@ -1,4 +1,8 @@
-# EC8203 Mini-Project — Comprehensive Project Plan
+# EC8203 Mini-Project — Original Comprehensive Project Plan
+
+> Historical proposal. For the delivered architecture, verified features and
+> deliberate deferrals, use `docs/FINAL_SCOPE.md`. Unchecked items below remain
+> planning history and must not be presented as completed work.
 
 **Project:** Real-Time Ride-Hailing Fleet Operations & Profitability Platform
 **Module:** EC8203 Applied Big Data Engineering (25% of grade, 2 weeks)

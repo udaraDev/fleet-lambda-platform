@@ -11,6 +11,7 @@ from psycopg2.extras import Json, execute_values
 from common.db import connection, fetch_all
 from common.domain import SIM_START, validate_expenses
 from common.archive import verified_paths
+from common.publication import ALGORITHM_VERSION, export_matches
 from common.logging_conf import log
 from common.settings import DATA_DIR, DQ_FAILURE_THRESHOLD, EVENT_INTERVAL_SECONDS, SIM_DAY_SECONDS, MAX_CHANGED_DATES_PER_RUN, vehicles
 
@@ -34,6 +35,10 @@ def run_day(report_date, batches=None):
         if not cur.fetchone()[0]:
             log("batch", "date_already_running", report_date=report_date)
             return False
+        cur.execute("""UPDATE pipeline_runs SET status='failed',ended_at=now(),
+            error='orphaned run recovered after process interruption'
+            WHERE dt=%s AND status='running' AND started_at < now()-interval '20 minutes'""",
+            (report_date,))
         return _run_day(report_date, batches)
 
 
@@ -58,12 +63,15 @@ def _run_day(report_date, batches=None):
         fingerprint = hashlib.sha256(contents + json.dumps({
             "files": [(b["batch_id"], f) for b in batches for f in b["archive_manifest"]["files"]
                       if f["path"].startswith(f"dt={report_date}/")],
-            "version": 3, "vehicles": sorted(vehicles()), "interval": EVENT_INTERVAL_SECONDS,
+            "version": ALGORITHM_VERSION, "vehicles": sorted(vehicles()), "interval": EVENT_INTERVAL_SECONDS,
             "day_seconds": SIM_DAY_SECONDS, "dq_threshold": DQ_FAILURE_THRESHOLD,
             "conflicts": conflicts,
         }, sort_keys=True).encode()).hexdigest()
-        previous = fetch_all("SELECT input_fingerprint, export_status FROM daily_report_status WHERE dt=%s", (report_date,))
-        if previous and previous[0]["input_fingerprint"] == fingerprint and previous[0]["export_status"] == "published":
+        previous = fetch_all("SELECT input_fingerprint, export_status, output_sha256 FROM daily_report_status WHERE dt=%s", (report_date,))
+        target = DATA_DIR / "reports" / f"profitability_{report_date}.json"
+        if (previous and previous[0]["input_fingerprint"] == fingerprint
+                and previous[0]["export_status"] == "published"
+                and export_matches(target, previous[0]["output_sha256"])):
             with connection() as conn, conn.cursor() as cur:
                 cur.execute("UPDATE pipeline_runs SET status='unchanged', ended_at=now() WHERE run_id=%s", (run_id,))
             return "unchanged"
@@ -95,21 +103,24 @@ def _run_day(report_date, batches=None):
                 columns = list(output[0])
                 execute_values(cur, "INSERT INTO daily_vehicle_profit (" + ",".join(columns) + ") VALUES %s",
                                [tuple(item[column] for column in columns) for item in output])
-            cur.execute("""INSERT INTO daily_report_status (dt,run_id,input_fingerprint,coverage,export_status)
-                VALUES (%s,%s,%s,%s,'pending') ON CONFLICT(dt) DO UPDATE SET
+            cur.execute("""INSERT INTO daily_report_status (dt,run_id,input_fingerprint,coverage,export_status,algorithm_version)
+                VALUES (%s,%s,%s,%s,'pending',%s) ON CONFLICT(dt) DO UPDATE SET
                 run_id=EXCLUDED.run_id,input_fingerprint=EXCLUDED.input_fingerprint,
-                coverage=EXCLUDED.coverage,export_status='pending',updated_at=now()""",
-                (report_date, run_id, fingerprint, Json(coverage)))
+                coverage=EXCLUDED.coverage,export_status='pending',updated_at=now(),
+                algorithm_version=EXCLUDED.algorithm_version,output_sha256=NULL""",
+                (report_date, run_id, fingerprint, Json(coverage), ALGORITHM_VERSION))
         report_dir = DATA_DIR / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         target = report_dir / f"profitability_{report_date}.json"
         temporary = target.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"date": report_date, "currency": "LKR", "money_unit": "cents",
-                                         "run_id": run_id, "coverage": coverage, "vehicles": output}, indent=2), encoding="utf-8")
+        payload = json.dumps({"date": report_date, "currency": "LKR", "money_unit": "cents",
+                              "algorithm_version": ALGORITHM_VERSION,
+                              "run_id": run_id, "coverage": coverage, "vehicles": output}, indent=2).encode("utf-8")
+        temporary.write_bytes(payload)
         temporary.replace(target)
         with connection() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE daily_report_status SET export_status='published',updated_at=now() WHERE dt=%s AND run_id=%s",
-                        (report_date, run_id))
+            cur.execute("UPDATE daily_report_status SET export_status='published',output_sha256=%s,updated_at=now() WHERE dt=%s AND run_id=%s",
+                        (hashlib.sha256(payload).hexdigest(), report_date, run_id))
             cur.execute("""UPDATE pipeline_runs SET status='success', rows_in=%s, rows_out=%s,
                            ended_at=now() WHERE run_id=%s""", (len(rows), len(output), run_id))
         log("batch", "report_published", run_id=run_id, report_date=report_date,
@@ -132,6 +143,14 @@ def run_available():
     dates = {source.stem.removeprefix("expenses_") for source in
              (DATA_DIR / "landing" / "expenses").glob("expenses_*.csv")}
     batches = fetch_all("SELECT batch_id, max_event_ts, rows_valid, archive_manifest FROM pipeline_batches ORDER BY batch_id")
+    # A process can die after recording 'running'. Once older than the documented
+    # stall threshold it cannot still own a session lock and is closed explicitly.
+    # The shape guard keeps pure unit fixtures database-free.
+    if batches and "batch_id" in batches[0]:
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute("""UPDATE pipeline_runs SET status='failed',ended_at=now(),
+                error='orphaned run recovered after process interruption'
+                WHERE status='running' AND started_at < now()-interval '20 minutes'""")
     boundary = max((b["max_event_ts"] for b in batches if b.get("max_event_ts")), default=None)
     if boundary:
         day = SIM_START.date()

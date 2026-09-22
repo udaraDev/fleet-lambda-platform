@@ -59,3 +59,19 @@ class IntegrityTests(unittest.TestCase):
                 patch.object(batch, "run_day", side_effect=["unchanged", True]) as run:
             batch.run_available()
             self.assertEqual([c.args[0] for c in run.call_args_list], ["2026-03-03", "2026-03-02"])
+
+    def test_available_run_recovers_orphaned_status(self):
+        class Cursor:
+            def execute(self, sql, params=()): self.sql = sql
+        class Conn:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def cursor(self):
+                class Context:
+                    def __enter__(self): self.value = Cursor(); return self.value
+                    def __exit__(self, *args): pass
+                return Context()
+        with patch.object(batch, 'connection', return_value=Conn()), \
+             patch('pathlib.Path.glob', return_value=[]), \
+             patch.object(batch, 'fetch_all', return_value=[{'batch_id': 1, 'max_event_ts': None}]):
+            batch.run_available()

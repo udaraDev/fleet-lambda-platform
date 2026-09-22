@@ -12,8 +12,7 @@ from psycopg2.extras import Json, execute_values
 
 from common.domain import parse_timestamp
 
-EVENT_FIELDS = ("event_id", "trip_id", "driver_id", "vehicle_id", "lat", "lon", "speed_kmph",
-                "status", "fare_cents", "trip_completed", "zone", "event_ts", "trace_id")
+from common.events import EVENT_FIELDS
 
 
 def fingerprint(item):
@@ -28,7 +27,7 @@ def bulk_serve(cur, events, batch_id):
     if len(events) > 2500:
         raise ValueError("Serving batch exceeds bounded driver cap")
     ids = list({e["event_id"] for e in events})
-    trip_ids = list({e["trip_id"] for e in events if e["trip_completed"]})
+    trip_ids = list({e["trip_id"] for e in events if e["trip_id"]})
     cur.execute("SELECT event_id,fingerprint,event_ts,vehicle_id,trip_id FROM stream_event_keys WHERE event_id=ANY(%s)", (ids,))
     prior_events = {r[0]: r[1:] for r in cur.fetchall()}
     known = {key: value[0] for key, value in prior_events.items()}
@@ -79,6 +78,12 @@ def bulk_serve(cur, events, batch_id):
                        VALUES %s ON CONFLICT DO NOTHING""", rejected)
     if bad_trips:
         cur.execute("DELETE FROM completed_trips WHERE trip_id=ANY(%s)", (list(bad_trips),))
+    if conflicting_ids or bad_trips:
+        # Unknown is safer than continuing to display a discredited observation.
+        # A new accepted observation reintroduces the vehicle; never replay a bad state.
+        cur.execute("""DELETE FROM rt_vehicle_state WHERE event_id=ANY(%s) OR event_id IN
+            (SELECT event_id FROM stream_event_keys WHERE trip_id=ANY(%s))""",
+            (list(conflicting_ids), list(bad_trips)))
     if not accepted:
         return len(rejected)
     cur.execute("""SELECT vehicle_id,zone,status,idle_since,event_ts,event_id,trace_id

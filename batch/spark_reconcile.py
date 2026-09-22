@@ -54,8 +54,10 @@ def aggregate(paths, expenses, report_date, known_vehicles):
         if raw.join(expected, "vehicle_id", "left_anti").limit(1).count():
             raise ValueError("Unknown vehicle in committed archive")
         # Ingest timestamps may differ on a retry; business event content may not.
-        fields = sorted(c for c in raw.columns if c not in
-                        {"ingest_ts", "event_time", "dt", "time_of_day_bucket"})
+        from common.events import EVENT_FIELDS
+        # Match live business identity: fixed schema, UTC instant, not timestamp spelling.
+        fields = [F.col("event_time").alias("event_ts") if c == "event_ts" else F.col(c)
+                  for c in EVENT_FIELDS]
         signatures = raw.withColumn("signature", F.to_json(F.struct(*fields)))
         bad_ids = signatures.groupBy("event_id").agg(F.countDistinct("signature").alias("n")).filter("n > 1")
         event_conflicts = raw.join(bad_ids, "event_id").select("vehicle_id").distinct()
