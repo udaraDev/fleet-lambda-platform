@@ -13,7 +13,7 @@ committed archives are verified, and serving writes use bounded transactional bu
 
 ### Upgrade an existing dataset
 
-Fresh installations run both schema SQL files automatically. Existing volumes need
+Fresh installations run all three SQL migration files automatically. Existing volumes need
 the additive migration below before starting the upgraded writer. Back up the fleet
 database first; do not delete checkpoints, archives or volumes.
 

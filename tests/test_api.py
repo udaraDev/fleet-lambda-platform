@@ -56,20 +56,49 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1, "Rows and metadata must share one statement snapshot")
         self.assertEqual(response.json()['publication']['run_id'], 'one-version')
 
-    @patch("api.main.fetch_all")
-    def test_report_health_detects_failed_batch_with_fresh_report(self, fetch):
+    def _mock_health_conn(self, rows):
+        """Minimal mock for the health/reports single-connection path."""
+        from unittest.mock import MagicMock
+        results = list(rows)
+        cur = MagicMock()
+        call_count = [0]
+        cur.fetchone.side_effect = lambda: (results[call_count[0]], call_count.__setitem__(0, call_count[0] + 1))[0]
+        cur.fetchall.side_effect = lambda: (results[call_count[0]], call_count.__setitem__(0, call_count[0] + 1))[0]
+        cur.__enter__ = lambda s: s
+        cur.__exit__ = MagicMock(return_value=False)
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        conn.__enter__ = lambda s: s
+        conn.__exit__ = MagicMock(return_value=False)
+        return conn
+
+    @patch("api.main.export_matches", return_value=True)
+    @patch("common.db.connection")
+    def test_report_health_detects_failed_batch_with_fresh_report(self, mock_conn, mock_exp):
         from datetime import date
-        fetch.side_effect = [[{"failed_dates": 1, "stalled_dates": 0}],
-                             [{"latest_report": date(2026, 3, 1), "pending_exports": 0}],
-                             [{"expected_report": date(2026, 3, 1)}], [], [{'n': 0}]]
+        mock_conn.return_value = self._mock_health_conn([
+            {"failed_dates": 1, "stalled_dates": 0},
+            {"latest_report": date(2026, 3, 1), "pending_exports": 0},
+            {"expected_report": date(2026, 3, 1)},
+            [],
+            {"n": 0},
+            None,
+        ])
         response = self.client.get("/health/reports")
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.json()["healthy"])
 
-    @patch("api.main.fetch_all")
-    def test_report_health_accepts_published_current_report(self, fetch):
+    @patch("api.main.export_matches", return_value=True)
+    @patch("common.db.connection")
+    def test_report_health_accepts_published_current_report(self, mock_conn, mock_exp):
         from datetime import date
-        fetch.side_effect = [[{"failed_dates": 0, "stalled_dates": 0}],
-                             [{"latest_report": date(2026, 3, 1), "pending_exports": 0}],
-                             [{"expected_report": date(2026, 3, 1)}], [], [{'n': 0}]]
+        mock_conn.return_value = self._mock_health_conn([
+            {"failed_dates": 0, "stalled_dates": 0},
+            {"latest_report": date(2026, 3, 1), "pending_exports": 0},
+            {"expected_report": date(2026, 3, 1)},
+            [],
+            {"n": 0},
+            None,
+        ])
         self.assertEqual(self.client.get("/health/reports").status_code, 200)
+

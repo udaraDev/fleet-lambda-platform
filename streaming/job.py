@@ -16,6 +16,10 @@ from streaming.sink import bulk_serve, EVENT_FIELDS
 from common.logging_conf import log
 from common.settings import DATA_DIR, KAFKA_BOOTSTRAP, TOPIC, SIM_DAY_SECONDS, EVENT_INTERVAL_SECONDS
 
+# Cached once at startup; the simulation start time is immutable for the
+# lifetime of a dataset and does not require a DB round-trip per micro-batch.
+_STARTED_AT = None
+
 
 def event_error(raw):
     try:
@@ -41,18 +45,20 @@ def process_batch(frame, batch_id):
 def _process_batch(frame, batch_id):
     from pyspark.sql import functions as F
 
-    if frame.isEmpty():
-        return
     with connection() as conn, conn.cursor() as cur:
         cur.execute("SELECT 1 FROM pipeline_batches WHERE batch_id = %s", (batch_id,))
         if cur.fetchone():
             return
+    # Persist before the first action so unpersist() always runs via finally,
+    # even when the batch is empty. Single count() replaces isEmpty() + count().
     cached = frame.persist()
     try:
-        count = frame.count()
+        count = cached.count()
+        if count == 0:
+            return
         if count > 2500:
             raise ValueError("Micro-batch exceeds serving safety cap; reduce Kafka offsets per trigger")
-        upper = simulated_time(clock_start(), datetime.now(timezone.utc), SIM_DAY_SECONDS) + timedelta(
+        upper = simulated_time(_STARTED_AT, datetime.now(timezone.utc), SIM_DAY_SECONDS) + timedelta(
             seconds=2 * EVENT_INTERVAL_SECONDS * 86400 / SIM_DAY_SECONDS)
         frame = frame.withColumn("error", F.when(F.col("error").isNotNull(), F.col("error")).when(
             (F.try_to_timestamp("event.event_ts") < F.lit(SIM_START)) |
@@ -96,11 +102,13 @@ def _process_batch(frame, batch_id):
 
 
 def main():
+    global _STARTED_AT
     from pyspark.sql import SparkSession, functions as F, types as T
 
     spark = SparkSession.builder.appName("fleet-speed-and-raw").config(
         "spark.sql.session.timeZone", "UTC"
     ).config("spark.sql.shuffle.partitions", "2").getOrCreate()
+    _STARTED_AT = clock_start()
     spark.sparkContext.setLogLevel("WARN")
     schema = T.StructType([
         T.StructField(name, kind) for name, kind in [

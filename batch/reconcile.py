@@ -52,29 +52,33 @@ def _run_day(report_date, batches=None):
         log("batch", "waiting_for_raw_day_boundary", report_date=report_date)
         return False
     source = DATA_DIR / "landing" / "expenses" / f"expenses_{report_date}.csv"
+    # Compute the fingerprint before creating a run record. Only the expense file
+    # bytes, DB conflict metadata, and manifest metadata are needed here; the
+    # Parquet archive integrity check (verified_paths) runs later once we know
+    # the inputs have changed and a real run is warranted. This prevents inserting
+    # thousands of 'unchanged' run records on every minute-cadence Airflow trigger.
+    contents = source.read_bytes()
+    conflicts = fetch_all("SELECT event_id,reason,payload FROM stream_conflicts WHERE dt=%s ORDER BY batch_id,event_id,reason", (report_date,))
+    fingerprint = hashlib.sha256(contents + json.dumps({
+        "files": [(b["batch_id"], f) for b in batches for f in b["archive_manifest"]["files"]
+                  if f["path"].startswith(f"dt={report_date}/")],
+        "version": ALGORITHM_VERSION, "vehicles": sorted(vehicles()), "interval": EVENT_INTERVAL_SECONDS,
+        "day_seconds": SIM_DAY_SECONDS, "dq_threshold": DQ_FAILURE_THRESHOLD,
+        "conflicts": conflicts,
+    }, sort_keys=True).encode()).hexdigest()
+    target = DATA_DIR / "reports" / f"profitability_{report_date}.json"
+    previous = fetch_all("SELECT input_fingerprint, export_status, output_sha256 FROM daily_report_status WHERE dt=%s", (report_date,))
+    if (previous and previous[0]["input_fingerprint"] == fingerprint
+            and previous[0]["export_status"] == "published"
+            and export_matches(target, previous[0]["output_sha256"])):
+        return "unchanged"
+    # Inputs changed or no verified publication — start a tracked run.
     run_id = str(uuid.uuid4())
     with connection() as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO pipeline_runs (run_id, dt, stage, status) VALUES (%s,%s,'reconcile','running')",
                     (run_id, report_date))
     try:
         paths = verified_paths(DATA_DIR, batches, report_date)
-        contents = source.read_bytes()
-        conflicts = fetch_all("SELECT event_id,reason,payload FROM stream_conflicts WHERE dt=%s ORDER BY batch_id,event_id,reason", (report_date,))
-        fingerprint = hashlib.sha256(contents + json.dumps({
-            "files": [(b["batch_id"], f) for b in batches for f in b["archive_manifest"]["files"]
-                      if f["path"].startswith(f"dt={report_date}/")],
-            "version": ALGORITHM_VERSION, "vehicles": sorted(vehicles()), "interval": EVENT_INTERVAL_SECONDS,
-            "day_seconds": SIM_DAY_SECONDS, "dq_threshold": DQ_FAILURE_THRESHOLD,
-            "conflicts": conflicts,
-        }, sort_keys=True).encode()).hexdigest()
-        previous = fetch_all("SELECT input_fingerprint, export_status, output_sha256 FROM daily_report_status WHERE dt=%s", (report_date,))
-        target = DATA_DIR / "reports" / f"profitability_{report_date}.json"
-        if (previous and previous[0]["input_fingerprint"] == fingerprint
-                and previous[0]["export_status"] == "published"
-                and export_matches(target, previous[0]["output_sha256"])):
-            with connection() as conn, conn.cursor() as cur:
-                cur.execute("UPDATE pipeline_runs SET status='unchanged', ended_at=now() WHERE run_id=%s", (run_id,))
-            return "unchanged"
         with io.StringIO(contents.decode("utf-8"), newline="") as handle:
             rows = list(csv.DictReader(handle))
         if not rows:

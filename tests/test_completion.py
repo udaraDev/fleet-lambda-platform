@@ -1,7 +1,7 @@
 import hashlib
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,27 +27,154 @@ class CompletionTests(unittest.TestCase):
         item = make_event(1, 5, SIM_START, SIM_START)
         self.assertEqual(fingerprint(item), fingerprint(dict(item, event_ts='2026-03-01T05:30:00+05:30')))
 
-    @patch('api.main.fetch_all')
-    def test_report_health_detects_historical_hole(self, fetch):
+    def _mock_conn(self, rows_per_query):
+        """Build a context-manager mock connection whose cursor returns rows in sequence."""
+        from unittest.mock import MagicMock
+        results = list(rows_per_query)
+        cur = MagicMock()
+        call_count = [0]
+        def fetchone():
+            r = results[call_count[0]]; call_count[0] += 1; return r
+        def fetchall():
+            r = results[call_count[0]]; call_count[0] += 1; return r
+        cur.fetchone.side_effect = fetchone
+        cur.fetchall.side_effect = fetchall
+        cur.__enter__ = lambda s: s
+        cur.__exit__ = MagicMock(return_value=False)
+        conn = MagicMock()
+        conn.cursor.return_value = cur
+        conn.__enter__ = lambda s: s
+        conn.__exit__ = MagicMock(return_value=False)
+        return conn
+
+    @patch('api.main.export_matches', return_value=True)
+    @patch('common.db.connection')
+    def test_report_health_detects_historical_hole(self, mock_conn, mock_exp):
         from fastapi.testclient import TestClient
         from api.main import app
-        fetch.side_effect = [[{'failed_dates': 0, 'stalled_dates': 0}],
-            [{'latest_report': date(2026, 3, 3), 'pending_exports': 0}],
-            [{'expected_report': date(2026, 3, 3)}], [], [{'n': 1}]]
+        # Queries in order: SET TRANSACTION (no fetch), summary, publication,
+        # expected, exports, missing, active_run
+        conn = self._mock_conn([
+            {'failed_dates': 0, 'stalled_dates': 0},         # summary fetchone
+            {'latest_report': date(2026, 3, 3), 'pending_exports': 0},  # publication fetchone
+            {'expected_report': date(2026, 3, 3)},            # expected fetchone
+            [],                                               # exports fetchall
+            {'n': 1},                                         # missing fetchone
+            None,                                             # active_run fetchone
+        ])
+        mock_conn.return_value = conn
         response = TestClient(app).get('/health/reports')
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['missing_dates'], 1)
 
     @patch('api.main.export_matches', return_value=False)
-    @patch('api.main.fetch_all')
-    def test_report_health_detects_corrupt_export(self, fetch, check):
+    @patch('common.db.connection')
+    def test_report_health_detects_corrupt_export(self, mock_conn, mock_exp):
         from fastapi.testclient import TestClient
         from api.main import app
         from common.publication import ALGORITHM_VERSION
-        fetch.side_effect = [[{'failed_dates': 0, 'stalled_dates': 0}],
-            [{'latest_report': date(2026, 3, 1), 'pending_exports': 0}],
-            [{'expected_report': date(2026, 3, 1)}],
-            [{'dt': date(2026, 3, 1), 'output_sha256': 'bad', 'algorithm_version': ALGORITHM_VERSION}], [{'n': 0}]]
+        conn = self._mock_conn([
+            {'failed_dates': 0, 'stalled_dates': 0},
+            {'latest_report': date(2026, 3, 1), 'pending_exports': 0},
+            {'expected_report': date(2026, 3, 1)},
+            [{'dt': date(2026, 3, 1), 'output_sha256': 'bad', 'algorithm_version': ALGORITHM_VERSION}],
+            {'n': 0},
+            None,
+        ])
+        mock_conn.return_value = conn
         response = TestClient(app).get('/health/reports')
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['invalid_exports'], 1)
+
+
+class TimezoneRegressionTests(unittest.TestCase):
+    """Assert that psycopg2's UTC timezone representation compares equal to
+    Python's timezone.utc.  The set union in sink.bulk_serve (line 55) builds
+    old_trips from psycopg2 cursor rows and compares them with datetimes from
+    parse_timestamp().  If the two tzinfo objects did not compare equal for the
+    same instant, valid trips would be falsely flagged as conflicts."""
+
+    def test_psycopg2_utc_equals_python_utc(self):
+        try:
+            import psycopg2.tz
+        except ImportError:
+            self.skipTest("psycopg2 not installed")
+        from common.domain import parse_timestamp
+        # psycopg2 returns timestamptz as datetime with FixedOffsetTimezone(0)
+        db_ts = datetime(2026, 3, 1, 0, 0, 0, tzinfo=psycopg2.tz.FixedOffsetTimezone(0))
+        py_ts = parse_timestamp("2026-03-01T00:00:00Z")
+        self.assertEqual(db_ts, py_ts,
+            "psycopg2 UTC datetime must equal parse_timestamp() result; "
+            "inequality would cause false trip conflicts in sink.bulk_serve")
+        # Same instant in +05:30 must also match
+        self.assertEqual(parse_timestamp("2026-03-01T05:30:00+05:30"), db_ts)
+
+    def test_psycopg2_utc_set_union_size_one(self):
+        """The set union in bulk_serve:55 must have size 1 for an exact replay."""
+        try:
+            import psycopg2.tz
+        except ImportError:
+            self.skipTest("psycopg2 not installed")
+        from common.domain import parse_timestamp
+        db_tuple = ("V-001", 5000, datetime(2026, 3, 1, tzinfo=psycopg2.tz.FixedOffsetTimezone(0)), "COLOMBO-01")
+        py_tuple = ("V-001", 5000, parse_timestamp("2026-03-01T00:00:00Z"), "COLOMBO-01")
+        self.assertEqual(len({db_tuple} | {py_tuple}), 1,
+            "A replayed trip must form a size-1 set so it is not marked as conflicting")
+
+
+class SparkPythonParityTests(unittest.TestCase):
+    """Verify that the Spark batch path and the pure-Python reconcile() produce
+    identical per-vehicle financial results for the same input data.
+    This guards against the Lambda duplication risk: a formula change in one
+    path without updating the other is the most likely source of a silent bug."""
+
+    def test_spark_aggregate_matches_python_reconcile(self):
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+        except ImportError as exc:
+            raise unittest.SkipTest("Parity test needs pyarrow") from exc
+
+        from common.domain import reconcile, validate_expenses
+        from simulators.fixtures import sample_events, expense_rows
+
+        day = "2026-03-01"
+        known = {"V-001", "V-002", "V-003"}
+        events = sample_events()
+        raw_costs = list(expense_rows(day, 3))
+        expenses, _ = validate_expenses(raw_costs, day, known)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # Write the fixture events as Parquet in the partition layout that
+            # the batch path expects: <root>/dt=<date>/<file>.parquet
+            part_dir = Path(tmp) / f"dt={day}"
+            part_dir.mkdir(parents=True)
+            parquet_path = part_dir / "part.parquet"
+            pq.write_table(pa.Table.from_pylist(events), parquet_path)
+
+            try:
+                from batch.spark_reconcile import aggregate
+                spark_rows, _ = aggregate([str(parquet_path)], expenses, day, known)
+            except ModuleNotFoundError as exc:
+                raise unittest.SkipTest("Parity test needs pyspark") from exc
+
+        python_rows = reconcile(events, expenses, day)
+        spark_by_v = {r["vehicle_id"]: r for r in spark_rows}
+        python_by_v = {r["vehicle_id"]: r for r in python_rows}
+
+        self.assertEqual(set(spark_by_v), set(python_by_v),
+                         "Both paths must produce the same set of vehicle IDs")
+        for vehicle in sorted(known):
+            with self.subTest(vehicle=vehicle):
+                s, p = spark_by_v[vehicle], python_by_v[vehicle]
+                self.assertEqual(s["trips"], p["trips"],
+                                 f"{vehicle}: trip count mismatch")
+                self.assertEqual(s["revenue_cents"], p["revenue_cents"],
+                                 f"{vehicle}: revenue mismatch")
+                self.assertEqual(s["profit_cents"], p["profit_cents"],
+                                 f"{vehicle}: profit mismatch")
+                self.assertEqual(s["is_unprofitable"], p["is_unprofitable"],
+                                 f"{vehicle}: is_unprofitable mismatch")
+                self.assertEqual(s["reconciliation_status"], p["reconciliation_status"],
+                                 f"{vehicle}: reconciliation_status mismatch")
+

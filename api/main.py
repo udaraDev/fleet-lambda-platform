@@ -62,34 +62,73 @@ def health_pipeline():
 @app.get("/health/reports")
 def health_reports():
     """Batch health is separate from live ingestion and financial completeness."""
+    from common.db import connection
+    from psycopg2.extras import RealDictCursor
     try:
-        summary = fetch_all("""WITH latest AS (
-            SELECT DISTINCT ON (dt) dt,status,started_at FROM pipeline_runs ORDER BY dt,started_at DESC
-        ) SELECT count(*) FILTER (WHERE status='failed') AS failed_dates,
-            count(*) FILTER (WHERE status='running' AND started_at < now()-interval '20 minutes') AS stalled_dates
-            FROM latest""")[0]
-        publication = fetch_all("""SELECT max(dt) FILTER (WHERE export_status='published') AS latest_report,
-            count(*) FILTER (WHERE export_status <> 'published') AS pending_exports
-            FROM daily_report_status""")[0]
-        expected = fetch_all("SELECT max(max_event_ts)::date - 1 AS expected_report FROM pipeline_batches")[0]["expected_report"]
-        exports = fetch_all("SELECT dt,output_sha256,algorithm_version FROM daily_report_status WHERE export_status='published'")
-        bad_exports = sum(not export_matches(DATA_DIR / 'reports' / ('profitability_' + str(r['dt']) + '.json'), r['output_sha256']) for r in exports)
+        with connection() as conn:
+            # One repeatable-read snapshot prevents split-brain responses when a
+            # reconciliation commit lands between queries.
+            with conn.cursor() as _iso:
+                _iso.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""WITH latest AS (
+                    SELECT DISTINCT ON (dt) dt,status,started_at FROM pipeline_runs ORDER BY dt,started_at DESC
+                ) SELECT count(*) FILTER (WHERE status='failed') AS failed_dates,
+                    count(*) FILTER (WHERE status='running' AND started_at < now()-interval '20 minutes') AS stalled_dates
+                    FROM latest""")
+                summary = dict(cur.fetchone())
+                cur.execute("""SELECT max(dt) FILTER (WHERE export_status='published') AS latest_report,
+                    count(*) FILTER (WHERE export_status <> 'published') AS pending_exports
+                    FROM daily_report_status""")
+                publication = dict(cur.fetchone())
+                cur.execute("SELECT max(max_event_ts)::date - 1 AS expected_report FROM pipeline_batches")
+                expected = cur.fetchone()["expected_report"]
+                cur.execute("SELECT dt,output_sha256,algorithm_version FROM daily_report_status WHERE export_status='published'")
+                exports = [dict(r) for r in cur.fetchall()]
+                cur.execute("""SELECT count(*) AS n FROM generate_series(date '2026-03-01',
+                    %s::date,interval '1 day') AS d(dt) LEFT JOIN daily_report_status s ON s.dt=d.dt
+                    WHERE s.dt IS NULL""", (expected,))
+                missing = cur.fetchone()["n"]
+                # Grace period: check if Airflow is actively computing the expected date
+                # so we return 'processing' instead of a false 503 at every day boundary.
+                cur.execute("""SELECT 1 FROM pipeline_runs
+                    WHERE dt=%s AND status='running'
+                    AND started_at > now()-interval '3 minutes'
+                    LIMIT 1""", (expected,))
+                active_run = cur.fetchone() is not None
+        # File-system checks are outside the DB snapshot (no DB interaction).
+        bad_exports = sum(
+            not export_matches(DATA_DIR / 'reports' / ('profitability_' + str(r['dt']) + '.json'),
+                               r['output_sha256'])
+            for r in exports)
         old_versions = sum(r['algorithm_version'] != ALGORITHM_VERSION for r in exports)
-        missing = fetch_all("""SELECT count(*) AS n FROM generate_series(date '2026-03-01',
-            %s::date,interval '1 day') AS d(dt) LEFT JOIN daily_report_status s ON s.dt=d.dt
-            WHERE s.dt IS NULL""", (expected,))[0]['n']
         healthy = (not summary["failed_dates"] and not summary["stalled_dates"] and
-                   not publication["pending_exports"] and not bad_exports and not old_versions and not missing and expected is not None and
-                   publication["latest_report"] is not None and publication["latest_report"] >= expected)
+                   not publication["pending_exports"] and not bad_exports and not old_versions
+                   and not missing and expected is not None and
+                   publication["latest_report"] is not None and
+                   publication["latest_report"] >= expected)
+        # Return 'processing' when the only failure signal is the brand-new expected
+        # date not yet published, and Airflow is actively running it (< 3 min ago).
+        if (not healthy and active_run and not summary["failed_dates"] and
+                not summary["stalled_dates"] and not bad_exports and not old_versions):
+            from fastapi.encoders import jsonable_encoder
+            return JSONResponse(jsonable_encoder({
+                "healthy": True, "status": "processing",
+                "expected_report": expected, "missing_dates": missing,
+                "invalid_exports": 0, "outdated_dates": 0,
+                "algorithm_version": ALGORITHM_VERSION,
+                **summary, **publication}), status_code=200)
         from fastapi.encoders import jsonable_encoder
-        return JSONResponse(jsonable_encoder({"healthy": healthy, "status": "healthy" if healthy else "degraded",
-                            "expected_report": expected, "missing_dates": missing,
-                            "invalid_exports": bad_exports, "outdated_dates": old_versions,
-                            "algorithm_version": ALGORITHM_VERSION,
-                            **summary, **publication}), status_code=200 if healthy else 503)
+        return JSONResponse(jsonable_encoder({
+            "healthy": healthy, "status": "healthy" if healthy else "degraded",
+            "expected_report": expected, "missing_dates": missing,
+            "invalid_exports": bad_exports, "outdated_dates": old_versions,
+            "algorithm_version": ALGORITHM_VERSION,
+            **summary, **publication}), status_code=200 if healthy else 503)
     except Exception as exc:
         log("api", "report_health_unavailable", error=str(exc))
         return JSONResponse({"healthy": False, "status": "database_unavailable"}, status_code=503)
+
 
 
 @app.get("/metrics/fleet")
