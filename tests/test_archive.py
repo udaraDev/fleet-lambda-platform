@@ -14,14 +14,21 @@ from simulators.fixtures import sample_events
 
 
 class ArchiveTests(unittest.TestCase):
-    @unittest.skip("Requires MinIO")
-    def test_only_committed_batches_and_requested_date_are_read(self):
+    @patch("common.archive.MINIO_BUCKET")
+    @patch("common.archive._get_fs")
+    def test_only_committed_batches_and_requested_date_are_read(self, mock_get_fs, mock_bucket):
+        import fsspec
+        mock_get_fs.return_value = fsspec.filesystem("file")
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            # On Windows, fsspec file paths are like C:/temp/..., which works fine.
+            root = Path(directory).as_posix()
+            mock_bucket.side_effect = None
+            mock_bucket.__str__.return_value = root
             for batch_id, day in ((1, "2026-03-01"), (2, "2026-03-01"), (1, "2026-03-02")):
-                partition = root / "raw" / str(batch_id) / f"dt={day}"
+                partition = Path(directory) / str(batch_id) / f"dt={day}"
                 partition.mkdir(parents=True)
                 pq.write_table(pa.Table.from_pylist(sample_events()), partition / "part.parquet")
-            with patch("batch.reconcile.DATA_DIR", root):
+
+            with patch("common.settings.MINIO_BUCKET", root):
                 events = list(read_events("2026-03-01", [1]))
             self.assertEqual(events, sample_events())

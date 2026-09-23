@@ -13,15 +13,15 @@ committed archives are verified, and serving writes use bounded transactional bu
 
 ### Upgrade an existing dataset
 
-Fresh installations run all three SQL migration files automatically. Existing volumes need
+Fresh installations run all five ordered SQL files automatically. Existing volumes need
 the additive migration below before starting the upgraded writer. Back up the fleet
 database first; do not delete checkpoints, archives or volumes.
 
 ```powershell
 docker compose build api airflow-scheduler
-docker compose stop airflow-scheduler streaming producer-stream
+docker compose stop airflow-scheduler streaming-raw streaming-speed producer-stream
 docker compose run --rm --no-deps api python -m scripts.migrate_integrity
-docker compose up -d --no-deps streaming producer-stream producer-batch api airflow-scheduler airflow-webserver
+docker compose up -d --no-deps streaming-raw streaming-speed producer-stream producer-batch api airflow-scheduler airflow-webserver
 ```
 
 The migration checks historical archive counts and baselines SHA-256 manifests and
@@ -32,14 +32,14 @@ Only restart upgraded writers after it succeeds.
 ## Architecture
 
 ```text
-Python telemetry -> Kafka -> Spark Structured Streaming -> PostgreSQL live tables
-                                      |
-                                      +-> local Parquet archive
-                                                    |
-Python daily expense CSV -> Airflow reconciliation <-+
+Python telemetry -> Kafka -> Spark speed consumer -> PostgreSQL live/window tables
+                         |
+                         +-> Spark raw consumer -> MinIO Parquet + manifests
+                                                     |
+Python daily expense CSV -> Airflow -> Spark batch <-+
                                       |
                                       +-> PostgreSQL daily profitability
-                                      +-> consolidated daily JSON report
+                                      +-> JSON, CSV, HTML and Parquet reports
 
 PostgreSQL -> FastAPI: fleet metrics, daily reports, health and metrics export
 ```
@@ -47,8 +47,7 @@ PostgreSQL -> FastAPI: fleet metrics, daily reports, health and metrics export
 The live path serves indicative operations metrics. The separate batch path
 recomputes daily financial results from archived events and the expense feed.
 Lambda supports corrected cost files while retaining original trip events.
-Initially, one Spark query archives and updates live state; MinIO and separate
-raw/speed consumers remain later milestones.
+Initially, one Spark query was used, but the architecture has been fully upgraded to separate raw/speed consumers using MinIO for scalable object storage.
 
 ## Start on Windows PowerShell
 
@@ -62,7 +61,7 @@ From the repository directory:
 Copy-Item .env.example .env
 docker compose up --build -d
 docker compose ps -a
-docker compose logs -f streaming producer-stream airflow-scheduler
+docker compose logs -f streaming-raw streaming-speed producer-stream airflow-scheduler
 ```
 
 Do not overwrite an existing `.env`; defaults also work without copying the file.
@@ -81,6 +80,9 @@ successful setup; this is expected. Other services should remain running.
 - Daily profitability: <http://localhost:8001/reports/daily/2026-03-01>
 - Confirmed loss-making vehicles: <http://localhost:8001/reports/daily/2026-03-01/unprofitable>
 - Airflow: <http://localhost:8080> (`admin` / `fleet_demo` by default).
+- MinIO console: <http://localhost:9001> (`minioadmin` / `minioadmin` by default).
+- Prometheus: <http://localhost:9090>
+- Grafana: <http://localhost:3000> (`admin` / `fleet_demo` by default).
 
 Credentials are for a local classroom demo. Ports bind only to localhost; Kafka
 and PostgreSQL are internal. If changing passwords in `.env`, use URL-safe
@@ -109,7 +111,8 @@ docker compose start producer-stream
 ```
 
 Pipeline health returns HTTP 503 for no recent valid ingestion or database failure.
-`/health` checks process liveness only. Notifications are not configured yet.
+`/health` checks process liveness only. Prometheus evaluates local alert rules;
+external notification routing remains a production deployment concern.
 
 After startup, run a read-only check of live ingestion, daily output and profit
 arithmetic (waits up to eight minutes for the first report):
@@ -195,19 +198,22 @@ py -3.11 -m venv .venv
   real time. A two-real-second tick advances 9.6 simulated minutes by default.
 - Keep clock scale, event interval and fleet size stable for a dataset's lifetime.
   Downtime advances the clock and can leave telemetry gaps.
-- Invalid stream records are archived under `/data/quarantine/stream`. Bad CSV
+- Invalid stream records are written to the MinIO `quarantine/` prefix, mirrored
+  to the Kafka dead-letter topic and recorded in `stream_dead_letters`. Bad CSV
   rows go to `dq_quarantine`; more than 5% rejected rows stops daily publication.
 
 ## Persistence and recovery
 
-Named volumes hold PostgreSQL, Kafka, Parquet, checkpoints and Airflow logs.
+Named volumes hold PostgreSQL, Kafka, MinIO Parquet, checkpoints, monitoring data
+and Airflow logs.
 `docker compose down` stops/removes containers without deleting this data.
 `docker compose up -d` resumes the stack.
 
-Each Spark batch writes Parquet before transactionally publishing live data and
-a commit ledger entry. Retries rewrite only an uncommitted batch. Reconciliation
-reads ledger-committed archives. Never delete only the checkpoint, archive or
-database: these form one dataset.
+The raw Spark consumer writes Parquet before publishing a manifest-backed commit
+ledger entry. The independent speed consumer transactionally publishes live state,
+completed trips and window metrics. Retries rewrite only an uncommitted raw batch.
+Reconciliation reads ledger-committed archives. Never delete only a checkpoint,
+archive or database: these form one dataset.
 
 Airflow checks ready dates every minute using a committed input snapshot, newest
 first. Unchanged verified inputs skip Spark recomputation; changed/late inputs
@@ -226,23 +232,31 @@ New-Item -ItemType Directory -Force reports
 docker compose cp api:/data/reports/profitability_2026-03-01.json reports/
 ```
 
-## Deliberate limits
-
-Formal Spark event-time windows/watermarks, MinIO, separate raw/speed consumers,
-Grafana/Prometheus servers, durable business-alert history and a distributed sink
-are explicitly deferred in FINAL_SCOPE.md. They are not described as completed.
-The Airflow batch uses Spark DataFrames for trip aggregation, conflicts, coverage
-and the expense join. PyArrow is used for archive metadata and test fixtures.
+## Implementation limits
 
 This version uses one Kafka broker and single-node Spark. Micro-batches are bounded
 and capped at 2,500 rows before collection; serving uses bulk database operations
-inside one transaction with the commit ledger. Daily trip state stays in Spark,
+inside one transaction. Daily trip state stays in Spark,
 with only fleet-size summaries collected. It does not claim end-to-end exactly-once delivery. Simulation restarts may
 skip ticks. Idle detection follows observed state changes and does not reconstruct
 late historical sessions. Database and JSON publication are separate operations;
 a pending publication status exposes export failure until Airflow retries it.
 Published JSON is versioned and SHA-256 verified; missing or corrupted output is
 regenerated. Use [DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) for the prepared live demo.
+Use [VIVA_QA.md](docs/VIVA_QA.md) for ten likely oral-exam questions and
+[CONTRIBUTION_STATEMENT.md](docs/CONTRIBUTION_STATEMENT.md) for the individual
+authorship statement.
+
+Run performance measurements only on a disposable Compose project because benchmark
+events enter the immutable archive:
+
+```powershell
+docker compose exec -T api python -m scripts.benchmark --eps 100 --duration 10 --disposable-dataset
+```
+
+The final short 10/100/500 eps smoke results are recorded in
+`output/evidence/performance-benchmark.json`; all published events were accepted.
+They include the five-second stream trigger and are not a sustained capacity claim.
 
 ## Technical references
 

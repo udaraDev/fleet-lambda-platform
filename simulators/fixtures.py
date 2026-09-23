@@ -36,4 +36,4 @@ def expense_rows(report_date, vehicle_count):
 def sample_events():
     """Small, reproducible input for tests and a dependency-free local demo."""
     return [make_event(n, tick, SIM_START + timedelta(minutes=tick), SIM_START)
-            for tick in range(12) for n in range(1, 4)]
+            for tick in range(150) for n in range(1, 4)]

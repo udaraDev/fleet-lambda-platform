@@ -1,5 +1,7 @@
 # Full project review and remaining work
 
+> **Historical audit snapshot (21 September 2026).** This file records issues found before the final remediation. It is not the current project status. Use `FINAL_SCOPE.md` and `output/evidence/final-verification.json` for the delivered state.
+
 Reviewed: 2026-09-21. Scope: assignment PDF (all five pages), PROJECT_PLAN.md,
 application code, configuration, tests, documentation and read-only runtime checks.
 This review does not change the implementation or inject failures into the live stack.

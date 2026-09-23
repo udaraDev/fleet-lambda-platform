@@ -1,0 +1,38 @@
+{
+  "measured_utc": "2026-09-23T03:43:00Z",
+  "environment": "isolated Docker Compose project with fresh PostgreSQL and Kafka volumes; Spark local[2]",
+  "duration_seconds_per_level": 3,
+  "interpretation": "End-to-end latency includes the five-second Structured Streaming trigger; this is a short classroom smoke benchmark, not a production capacity claim.",
+  "results": [
+    {
+      "target_eps": 10,
+      "sent": 30,
+      "accepted": 30,
+      "publish_eps": 9.99,
+      "end_to_end_eps": 2.77,
+      "latency_ms_p50": 7484.0,
+      "latency_ms_p95": 8484.05,
+      "latency_ms_max": 8584.09
+    },
+    {
+      "target_eps": 100,
+      "sent": 300,
+      "accepted": 300,
+      "publish_eps": 99.96,
+      "end_to_end_eps": 45.37,
+      "latency_ms_p50": 4681.46,
+      "latency_ms_p95": 6031.43,
+      "latency_ms_max": 6181.54
+    },
+    {
+      "target_eps": 500,
+      "sent": 1500,
+      "accepted": 1500,
+      "publish_eps": 498.77,
+      "end_to_end_eps": 172.18,
+      "latency_ms_p50": 4531.96,
+      "latency_ms_p95": 6149.35,
+      "latency_ms_max": 6298.43
+    }
+  ]
+}

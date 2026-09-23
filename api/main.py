@@ -3,7 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import JSONResponse, Response, HTMLResponse
 
 from common.db import fetch_all
 from common.logging_conf import log
@@ -175,11 +175,9 @@ def time_of_day(report_date: date):
 
 @app.get("/alerts/active")
 def alerts(idle_minutes: int = Query(default=15, ge=1, le=1440)):
-    return fetch_all("""SELECT vehicle_id, zone, idle_since, 'vehicle_idle' AS type
-        FROM rt_vehicle_state WHERE status='idle'
-        AND event_ts >= (SELECT max(event_ts) FROM rt_vehicle_state) - interval '30 minutes'
-        AND idle_since <= (SELECT max(event_ts) FROM rt_vehicle_state) - %s * interval '1 minute'
-        ORDER BY idle_since""", (idle_minutes,))
+    return fetch_all("""SELECT vehicle_id, alert_type AS type, raised_at, payload AS details
+        FROM rt_alerts WHERE resolved_at IS NULL
+        ORDER BY raised_at""")
 
 
 @app.get("/reports/daily")
@@ -225,15 +223,19 @@ def unprofitable_vehicles(report_date: date):
 
 
 
-@app.get("/metrics", response_class=PlainTextResponse)
+@app.get("/metrics")
 def metrics():
+    from prometheus_client import CollectorRegistry, Gauge, generate_latest, CONTENT_TYPE_LATEST
+
     status = pipeline_status()
     age = status["last_event_age_seconds"]
-    return ("# TYPE fleet_pipeline_healthy gauge\n"
-            f"fleet_pipeline_healthy {int(status['healthy'])}\n"
-            "# TYPE fleet_events_ingested_total counter\n"
-            f"fleet_events_ingested_total {status['rows_in']}\n"
-            "# TYPE fleet_events_rejected_total counter\n"
-            f"fleet_events_rejected_total {status['rows_rejected']}\n"
-            "# TYPE fleet_last_event_age_seconds gauge\n"
-            f"fleet_last_event_age_seconds {age if age is not None else -1}\n")
+    registry = CollectorRegistry()
+    values = (
+        ("fleet_pipeline_healthy", "Whether accepted telemetry is fresh", int(status["healthy"])),
+        ("fleet_events_ingested_total", "Total Kafka rows observed", status["rows_in"]),
+        ("fleet_events_rejected_total", "Total streaming rows rejected", status["rows_rejected"]),
+        ("fleet_last_event_age_seconds", "Real-time age of the latest accepted event", age if age is not None else -1),
+    )
+    for name, description, value in values:
+        Gauge(name, description, registry=registry).set(float(value))
+    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)

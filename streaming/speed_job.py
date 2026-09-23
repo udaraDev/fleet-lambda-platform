@@ -1,4 +1,4 @@
-﻿"""Independent Speed Serving Consumer.
+"""Independent Speed Serving Consumer.
 
 Reads from Kafka, applies formal Spark tumbling windows + watermarks for zone metrics,
 and writes live state to PostgreSQL. Maintains a separate checkpoint from the raw archive.
@@ -34,6 +34,18 @@ def process_serving_batch(frame, batch_id):
             (F.try_to_timestamp("event.event_ts") < F.lit(SIM_START)) |
             (F.try_to_timestamp("event.event_ts") > F.lit(upper)), F.lit("outside_simulation_time")))
             
+        invalid = frame.filter("error IS NOT NULL").select("raw", "error", "partition", "offset").collect()
+        if invalid:
+            from kafka import KafkaProducer
+            from common.settings import KAFKA_BOOTSTRAP
+            from streaming.sink import dead_letter_send
+
+            producer = KafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
+            with connection() as conn, conn.cursor() as cur:
+                for row in invalid:
+                    dead_letter_send(producer, row["raw"], row["error"], row["partition"], row["offset"], batch_id, cur)
+            producer.close()
+
         valid = frame.filter("error IS NULL").select("event.*").withColumn(
             "event_time", F.to_timestamp("event_ts")
         ).withColumn(
@@ -64,7 +76,7 @@ def process_metrics_batch(frame, batch_id):
     with connection() as conn, conn.cursor() as cur:
         execute_values(cur, """
             INSERT INTO rt_zone_metrics
-            (window_start, zone, active_vehicles, idle_ratio, trips, earnings_cents, updated_at)
+            (window_start, zone, active_vehicles, idle_ratio, trips, earnings_cents)
             VALUES %s ON CONFLICT (window_start, zone) DO UPDATE SET
             active_vehicles=EXCLUDED.active_vehicles, 
             idle_ratio=EXCLUDED.idle_ratio,
@@ -107,9 +119,14 @@ def main():
     parsed = source.selectExpr("CAST(value AS STRING) AS raw", "partition", "offset").withColumn(
         "event", F.from_json("raw", schema)).withColumn("error", validation_error())
         
+    scale = 86400 / SIM_DAY_SECONDS
+    margin = 2 * EVENT_INTERVAL_SECONDS * scale
+    sim_start_unix = SIM_START.timestamp()
+    upper_expr = F.expr(f"timestamp_seconds({sim_start_unix} + (unix_timestamp(current_timestamp()) - {_STARTED_AT.timestamp()}) * {scale} + {margin})")
+
     valid = parsed.filter("error IS NULL").select("event.*").withColumn(
         "event_time", F.to_timestamp("event_ts")
-    )
+    ).filter((F.col("event_time") >= F.lit(SIM_START)) & (F.col("event_time") <= upper_expr))
     
     log("streaming-speed", "started", topic=TOPIC)
     
@@ -119,14 +136,16 @@ def main():
     ).trigger(processingTime="5 seconds").start()
     
     # Query 2: Tumbling Window Metrics with Watermarks
-    windowed = valid.withWatermark("event_time", "2 minutes").groupBy(
+    # Event identity is global. Including event_time in the key allowed a
+    # conflicting retry with a changed timestamp to be counted twice.
+    windowed = valid.withWatermark("event_time", "2 minutes").dropDuplicatesWithinWatermark(["event_id"]).groupBy(
         F.window("event_time", "1 minute").alias("window"),
         "zone"
     ).agg(
-        F.countDistinct("vehicle_id").alias("reporting"),
-        F.countDistinct(F.when(F.col("status") != "idle", F.col("vehicle_id"))).alias("active_vehicles"),
-        (F.countDistinct(F.when(F.col("status") == "idle", F.col("vehicle_id"))) / 
-         F.countDistinct("vehicle_id")).alias("idle_ratio"),
+        F.approx_count_distinct("vehicle_id").alias("reporting"),
+        F.approx_count_distinct(F.when(F.col("status") != "idle", F.col("vehicle_id"))).alias("active_vehicles"),
+        (F.approx_count_distinct(F.when(F.col("status") == "idle", F.col("vehicle_id"))) /
+         F.approx_count_distinct("vehicle_id")).alias("idle_ratio"),
         F.count(F.when(F.col("trip_completed"), F.col("event_id"))).alias("trips"),
         F.sum(F.when(F.col("trip_completed"), F.col("fare_cents")).otherwise(0)).alias("earnings_cents")
     ).select(

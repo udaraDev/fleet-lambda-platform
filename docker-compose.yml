@@ -28,6 +28,8 @@ x-airflow: &airflow
   build:
     context: .
     dockerfile: docker/airflow.Dockerfile
+    additional_contexts:
+      platform: service:api
   environment: &airflow-env
     <<: *app-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -110,7 +112,7 @@ services:
     command: [python, -c, "import os; os.chown('/data',50000,0); os.chmod('/data',0o770)"]
 
   minio:
-    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
+    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
@@ -118,16 +120,17 @@ services:
     volumes:
       - minio-data:/data
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '127.0.0.1:${MINIO_API_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   minio-mc:
-    image: minio/mc:RELEASE.2024-04-18T16-45-29Z
+    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     depends_on:
       minio:
         condition: service_healthy
@@ -139,8 +142,7 @@ services:
 
   streaming-raw:
     <<: *app
-    command: [spark-submit, --master, 'local[2]', --driver-memory, 1g,
-              --packages, 'org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262', streaming/raw_job.py]
+    command: [spark-submit, --master, 'local[2]', --driver-memory, 1g, streaming/raw_job.py]
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,8 +155,7 @@ services:
 
   streaming-speed:
     <<: *app
-    command: [spark-submit, --master, 'local[2]', --driver-memory, 1g,
-              --packages, 'org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6', streaming/speed_job.py]
+    command: [spark-submit, --master, 'local[2]', --driver-memory, 1g, streaming/speed_job.py]
     depends_on:
       postgres:
         condition: service_healthy
@@ -239,6 +240,7 @@ services:
       - --storage.tsdb.retention.time=7d
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus
     ports:
       - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'

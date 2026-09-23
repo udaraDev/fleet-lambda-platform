@@ -4,7 +4,7 @@ up:
 down:
 	docker compose down
 logs:
-	docker compose logs -f streaming producer-stream airflow-scheduler
+	docker compose logs -f streaming-raw streaming-speed producer-stream airflow-scheduler
 test:
 	python -m unittest discover -s tests -v
 demo:

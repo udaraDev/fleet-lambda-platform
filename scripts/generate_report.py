@@ -38,19 +38,19 @@ class Architecture(Flowable):
             c.line(x2,y2,bx-px*1.5*mm,by-py*1.5*mm)
         box(0,82*mm,38*mm,24*mm,'Telemetry source',['Python, 12 vehicles','every 2 real seconds'])
         box(52*mm,82*mm,30*mm,24*mm,'Kafka',['trip-events','3 partitions'])
-        box(96*mm,82*mm,43*mm,24*mm,'Spark streaming',['native validation','bounded bulk serving'])
+        box(96*mm,82*mm,43*mm,24*mm,'Spark speed',['live state + alerts','1-minute windows'])
         arrow(38*mm,94*mm,52*mm,94*mm); arrow(82*mm,94*mm,96*mm,94*mm)
-        box(96*mm,45*mm,43*mm,24*mm,'Raw archive',['Parquet by date','SHA-256 manifest'])
+        box(96*mm,45*mm,43*mm,24*mm,'Spark raw + MinIO',['Parquet by date','SHA-256 manifest'])
         box(0,45*mm,38*mm,24*mm,'Daily source',['expense CSV','one simulated day'])
-        box(50*mm,45*mm,32*mm,24*mm,'Airflow',['1-minute poll','date isolation'])
+        box(50*mm,45*mm,32*mm,24*mm,'Airflow',['profit + DQ DAGs','date isolation'])
         arrow(38*mm,57*mm,50*mm,57*mm); arrow(96*mm,57*mm,82*mm,57*mm)
-        arrow(117*mm,82*mm,117*mm,69*mm)
+        arrow(67*mm,82*mm,105*mm,69*mm)
         box(50*mm,8*mm,48*mm,24*mm,'Spark batch',['dedup + coverage','cost join + profit'])
         arrow(66*mm,45*mm,66*mm,32*mm)
         box(112*mm,8*mm,42*mm,24*mm,'PostgreSQL',['live + daily tables','versions + quarantine'])
         arrow(98*mm,20*mm,112*mm,20*mm)
         c.line(139*mm,94*mm,148*mm,94*mm); arrow(148*mm,94*mm,148*mm,32*mm)
-        box(5*mm,8*mm,32*mm,24*mm,'FastAPI',['results page + API','health + metrics'])
+        box(5*mm,8*mm,32*mm,24*mm,'Serving',['FastAPI + Prometheus','Grafana dashboards'])
         c.line(133*mm,8*mm,133*mm,3*mm); c.line(133*mm,3*mm,37*mm,3*mm)
         arrow(37*mm,3*mm,37*mm,8*mm)
 
@@ -114,7 +114,7 @@ story += [Spacer(1,35*mm), p('FLEET LAMBDA PLATFORM','TitleX'),
           Spacer(1,18*mm), p('<b>EC8203 Applied Big Data Engineering Mini-Project</b>','SubTitle'),
           Spacer(1,22*mm), table([['Author','Programme'],['Udara Subodhitha Senevirathna','BSc Computer Engineering'],
           ['Institution','University of Ruhuna'],['Report date','22 September 2026']], [65*mm,80*mm],8.5),
-          Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation, measured checks and deliberate deferrals. It does not claim a recorded demo video, production-scale throughput, Grafana/MinIO deployment or formal event-time windows.','Callout'),
+          Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation and measured checks. It distinguishes local classroom evidence from production claims and does not claim a recorded demo video or production-scale capacity.','Callout'),
           PageBreak()]
 
 story += [p('1. Use case and requirements','H1X'),
@@ -146,10 +146,10 @@ story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
  p('<b>Consistency promise:</b> no end-to-end exactly-once claim. Kafka checkpoints, event identities, trip keys, archive manifests, database transactions and idempotent restatement provide practical replay safety within the documented single-writer dataset contract.','Callout'), PageBreak()]
 
 story += [p('3. Delivered architecture and data flow','H1X'), Architecture(),
- p('Figure 1. Delivered local Lambda architecture. Arrows show the primary data flow; PostgreSQL serves FastAPI. The raw archive and database/checkpoint are operated as one dataset.' ,'Small'),
- p('The single Spark streaming query validates Kafka records, archives valid events and applies bounded bulk serving. A session advisory lock fences archive writes; a transaction lock protects the commit ledger. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
- p('Storage contracts','H2X')] + bullets([
- 'Raw Parquet files are accepted only through committed batch manifests containing row counts and SHA-256 digests.',
+ p('Figure 1. Delivered local Lambda architecture. Kafka feeds independent speed and raw consumers; PostgreSQL serves FastAPI and Prometheus is visualised in Grafana. The MinIO archive, database and checkpoints are operated as one dataset.' ,'Small'),
+ p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
+ PageBreak(), p('Storage contracts','H2X')] + bullets([
+ 'Raw MinIO Parquet files are accepted only through committed batch manifests containing row counts and SHA-256 digests.',
  'PostgreSQL stores latest vehicle state, completed trips, persistent event identities, conflicts, quarantine, run history and daily profitability.',
  'Daily JSON contains run ID, algorithm version, quality coverage and vehicle results. Its SHA-256 is stored in PostgreSQL and checked by health/retry logic.']) + [PageBreak()]
 
@@ -160,15 +160,15 @@ story += [p('4. Technology selection','H1X'), table([
  ['Spark DataFrames (batch)','Distributed trip aggregation, conflict detection, coverage and expense join.','Pure Python dictionaries were removed from production batch processing.'],
  ['Airflow 2.10','Scheduled discovery, retries, UI and serialized daily reconciliation.','One visible task is simpler but offers less stage-level retry detail.'],
  ['PostgreSQL 16','Transactions, constraints, JSON metadata and queryable serving.','Cassandra is less suited to relational reconciliation and local transactions.'],
- ['Parquet','Columnar immutable replay source with typed timestamps and date partitions.','MinIO/S3 adds deployment realism but not required laptop value.'],
+ ['MinIO + Parquet','S3-compatible immutable replay source with typed timestamps, date partitions and verified manifests.','Single-node MinIO is for local reproducibility, not high availability.'],
  ['FastAPI','Typed validation, API documentation, health endpoints and a small business view.','Airflow UI is not a fleet dashboard.'],
  ['Docker Compose','Repeatable single-host wiring and persistent named volumes.','Not production orchestration.']], [28*mm,70*mm,67*mm],7.1),
  p('The implementation pins major Python dependencies and container images. Host tests use Python 3.11 where possible; CI installs the development requirements and validates Compose configuration. Local demo credentials and loopback-only ports are not suitable for external deployment.','Callout'), PageBreak()]
 
 story += [p('5. Implementation','H1X'), p('Streaming path','H2X')] + bullets([
  'Python emits telemetry for twelve vehicles; every fourth vehicle remains parked to create an interpretable idle/cost-only case.',
- 'Spark uses from_json plus native column constraints. Unknown vehicles, malformed JSON, impossible coordinates/speed, invalid types and out-of-bounds simulated timestamps are rejected.',
- 'Micro-batches are capped at 2,500 rows and Kafka at 2,000 offsets per trigger. Accepted rows are collected only inside this explicit classroom bound, then written with bulk SQL operations.',
+ 'Both consumers use from_json plus native column constraints. Unknown vehicles, malformed JSON, impossible coordinates/speed, invalid types and out-of-bounds simulated timestamps are rejected.',
+ 'Kafka is capped at 2,000 offsets per trigger and serving micro-batches at 2,500 rows. Accepted serving rows are collected only inside this explicit classroom bound, then written with bulk SQL operations.',
  'Persistent event fingerprints deduplicate across batches. Same identity with different business content becomes a conflict; implicated trip revenue and live state are removed rather than arbitrarily selected.']) + [
  p('Batch path','H2X')] + bullets([
  'Only ledger-committed and checksum-verified Parquet enters reconciliation. Spark detects event/trip conflicts, aggregates completions by vehicle and calculates telemetry coverage.',
@@ -186,7 +186,7 @@ story += [p('6. Observability and failure behaviour','H1X'), table([
  ['Data quality','Quarantine rows and >5% daily gate','Bad date fails; last good daily result remains'],
  ['Tracing','trace_id in source/live trip records and structured logs','Supports event walkthrough; not full distributed tracing'],
  ['Business alert','Observed idle_since against simulated latest event','API lists considerably idle vehicles']], [31*mm,67*mm,67*mm],7.2),
- p('Structured JSON logs include timestamp, stage and message plus batch/run identifiers, row counts and errors where relevant. The /metrics endpoint exports fixed numeric Prometheus text, but no Prometheus server, notification channel or Grafana instance is claimed.'),
+ p('Structured JSON logs include timestamp, stage and message plus batch/run identifiers, row counts and errors where relevant. The official Prometheus Python client exports metrics; a pinned Prometheus server evaluates three local rules and a provisioned Grafana dashboard visualises pipeline health. External notification routing is deliberately outside the local submission.'),
  p('Failure exercise','H2X'), p('Final verification stopped only the telemetry producer. Ingestion health returned HTTP 503 at a 126-second event age, then the cleanup handler restarted the producer and health recovered to HTTP 200 at 5.6 seconds. The demo runbook repeats this exercise. Because the simulation wall clock continues, an outage creates an honest historical coverage gap; the system must not fabricate events or profit.'),
  p('<b>Recovery rule:</b> PostgreSQL, Kafka, Parquet and Spark checkpoint form one logical dataset. Coordinated backups are required. Deleting one component alone is unsupported. Conflicts require audited source correction and a deliberate rebuild, not ad-hoc deletion.','Callout'), PageBreak()]
 
@@ -196,9 +196,10 @@ story += [p('7. Results and business output','H1X'),
  p('Figure 2. Actual local results page captured after the version-4 restatement. The visible table shows genuine parked-vehicle losses and completed profitable vehicle-days.','Small'),
  p('Verified snapshots','H2X'), table([
  ['Evidence','Observed result'],
- ['Automated unit/API/archive tests','39 passed after completion fixes'],
+ ['Automated unit/API/archive tests','45 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
  ['Isolated Spark/PostgreSQL suite','23 named checks passed; disposable schema and temporary files'],
- ['Fresh volumes','Eight long-running services healthy/running; DAG imports clean; report and live smoke checks passed'],
+ ['Fresh volumes','Sixteen-service Compose definition; DAG imports, report, live, MinIO and monitoring checks'],
+ ['Short throughput smoke test','10/100/500 target eps: all 30/300/1,500 events accepted; p95 latency 8.48/6.03/6.15 s'],
  ['Final report-integrity health','Healthy; 209 dates; zero missing, invalid, outdated, failed, stalled or pending'],
  ['Final result quality snapshot','788 complete vehicle-days; 1,720 incomplete-telemetry vehicle-days']], [61*mm,104*mm]),
  p('The historical counts are a dated snapshot, not a performance benchmark. Incomplete days reflect real downtime in the persistent demonstration dataset. All retained dates were restated under algorithm version 4 so export digests and identity semantics were recalculated rather than inherited.','Callout'), PageBreak()]
@@ -212,30 +213,30 @@ story += [p('8. Verification and reproducibility','H1X'),
  ['Validation','Malformed JSON, unknown vehicle, future timestamp and daily cost quality gate'],
  ['Concurrency','Same-date Airflow lock and consistent one-statement API read'],
  ['Operations','Compose schema, DAG imports, all endpoints, empty PostgreSQL/Kafka/archive/checkpoint volumes']], [38*mm,127*mm]),
- p('Fresh-install evidence','H2X'), p('An isolated Compose project used empty uniquely named volumes, alternate localhost ports and the already built images. It generated live data and a daily report, passed the read-only smoke test, showed no Airflow import errors, and was then stopped. Its volumes were retained for inspection. This validates initialization on the same Docker host; it does not claim an uncached second-machine download test.'),
+ p('Fresh-install evidence','H2X'), p('An isolated Compose project used empty uniquely named volumes, alternate localhost ports and the already built images. It generated live data and a daily report, passed the read-only smoke test, showed no Airflow import errors, and was then stopped. Its disposable volumes were removed after machine-readable evidence was saved. This validates initialization on the same Docker host; it does not claim an uncached second-machine download test.'),
  p('Reproduction','H2X')] + bullets([
  'Copy .env.example to .env only when no real .env exists, then run docker compose up --build -d.',
  'Run python -m unittest discover -s tests -v and python -m scripts.verify_running --wait-seconds 480.',
  'Run the isolated reconciliation verification in the application image; it cleans only its UUID schema.',
- 'Use scripts/verify_clean_install.py when alternate ports 18001/18080 are free; it preserves test volumes and stops containers.']) + [PageBreak()]
+ 'Use scripts/verify_clean_install.py when its alternate ports are free; it records evidence, stops containers and removes only its uniquely named disposable volumes.']) + [PageBreak()]
 
 story += [p('9. Limitations, scale and security','H1X'), table([
  ['Current limitation','Production direction'],
  ['Single Kafka broker / local[2] Spark','Replicated Kafka, distributed Spark and capacity testing'],
  ['Bounded driver collection and PostgreSQL merge','Partition staging and set-based final merge after measured load'],
- ['Small immutable Parquet files','Object storage plus Iceberg/Delta compaction and retention'],
+ ['Small immutable MinIO Parquet files','Iceberg/Delta compaction, lifecycle policies and replicated object storage'],
  ['One Airflow task','Stage-specific tasks/sensors after operational need is demonstrated'],
- ['SQL live lookbacks; no watermark finalization','Revise simulator cadence, then add event-time windows and explicit lateness policy'],
+ ['Two-minute watermark is a classroom policy','Tune allowed lateness from measured production arrival distributions'],
  ['Local credentials, no API auth/TLS','Secrets manager, least-privilege roles, authentication, TLS and network policy'],
- ['No Prometheus/Grafana notification stack','Scraping, dashboards, SLOs and routed alerts'],
+ ['Local Prometheus/Grafana; no routed notifications','Production SLOs, Alertmanager routes and on-call ownership'],
  ['Manual conflict resolution','Audited correction/rebuild workflow and lineage tooling'],
- ['No measured 500 eps claim','Representative load generator, p50/p95, resource and database saturation tests']], [58*mm,107*mm]),
- p('The project deliberately defers MinIO, separate consumers, formal windows, Grafana and durable alert history. The brief requires meaningful processing, a consolidated report or dashboard and at least one alert/health rule; adding optional infrastructure would not replace correctness, architecture reasoning or reproducible evidence.'),
+ ['Short 500 eps smoke test only','Long-duration saturation, resource profiling and realistic arrival distributions']], [58*mm,107*mm]),
+ p('The project implements MinIO, separate consumers, formal windows, Grafana and durable alert history. It still treats them as local teaching infrastructure: correctness, architecture reasoning and reproducible evidence remain more important than naming production tools.'),
  p('Security scope','H2X'), p('Host ports bind to loopback and credentials are documented as local-demo only. Before external deployment, rotate secrets, give FastAPI a read-only database role, separate migration/write roles, authenticate endpoints, enable TLS and define retention/privacy controls for location traces.'),
  p('Ethical interpretation','H2X'), p('Profitability is an operational vehicle measure, not a driver-performance score. Missing data and conflicts are shown as unknown to reduce harmful inference. A production system would require governance for location access, retention and human review of alerts.'), PageBreak()]
 
 story += [p('10. Conclusion and references','H1X'),
- p('The delivered platform meets the core mini-project objective: two simulated sources feed an observable Lambda pipeline; Spark supports both near-real-time processing and historical reconciliation; Airflow orchestrates daily work; results land in queryable PostgreSQL and a versioned consolidated report; and FastAPI exposes operational and financial answers.'),
+ p('The delivered platform meets the core mini-project objective: two simulated sources feed an observable Lambda pipeline; independent Spark consumers provide raw and speed layers; Spark also performs historical reconciliation; Airflow orchestrates profitability and data-quality work; results land in queryable PostgreSQL and versioned exports; and FastAPI, Prometheus and Grafana expose operational and financial answers.'),
  p('The strongest engineering decision is not a particular tool but the treatment of uncertainty. Duplicate identities are idempotent, conflicts invalidate authority, missing telemetry does not become zero revenue, bad cost files preserve the last good result, and published files are checked rather than assumed. The result is a defensible teaching system with explicit boundaries.'),
  p('References','H2X')] + bullets([
  'EC8203 Data Engineering Mini-Project brief, 2026, pages 1-5.',
@@ -248,8 +249,11 @@ story += [p('10. Conclusion and references','H1X'),
  ['Source repository/ZIP','Complete code, Compose, migrations, tests and CI workflow'],
  ['This PDF','Architecture decision, design, evidence, limitations and references'],
  ['docs/DEMO_RUNBOOK.md','Prepared approximately eight-minute live demonstration'],
+ ['docs/VIVA_QA.md','Ten likely viva questions with honest prepared answers'],
+ ['docs/CONTRIBUTION_STATEMENT.md','Individual authorship and contribution statement'],
  ['docs/FINAL_SCOPE.md','Authoritative delivered scope and deferrals'],
- ['output/evidence/clean-install.json','Machine-readable fresh-volume verification evidence']], [55*mm,110*mm]),
+ ['output/evidence/clean-install.json','Machine-readable fresh-volume verification evidence'],
+ ['output/evidence/performance-benchmark.json','10/100/500 eps latency and acceptance evidence']], [55*mm,110*mm]),
  p('Contribution note. The README identifies one author. No additional group-member contributions are invented. If submitted as group work, the students must add a truthful statement based on actual contributions.','Callout')]
 
 OUT.parent.mkdir(parents=True, exist_ok=True)

@@ -153,9 +153,11 @@ def bulk_serve(cur, events, batch_id):
                            WHERE vehicle_id = ANY(%s) AND resolved_at IS NULL
                            AND alert_type = 'idle_threshold'""", (vehicles_to_check,))
             open_alerts = {r[0]: r[1] for r in cur.fetchall()}
-            now_utc = max_ts if accepted else None
-            if now_utc is None:
-                from datetime import datetime as _dt
+            if accepted:
+                max_ts = max(parse_timestamp(e["event_ts"]) for e in accepted)
+                now_utc = max_ts
+            else:
+                from datetime import datetime as _dt, timezone as _tz
                 now_utc = _dt.now(_tz.utc)
             for vid in vehicles_to_check:
                 idle_since = idle_states.get(vid)

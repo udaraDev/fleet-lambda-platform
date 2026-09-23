@@ -39,24 +39,24 @@ If the terminal is forcibly killed, run `docker compose start producer-stream`.
 
 ## 6:30-7:30 - Correctness evidence
 
-Show saved integration evidence: 23 checks covering replay, malformed inputs,
-expense corrections, missing/corrupt output repair, quarantine, archive loss,
-timestamp parity, conflict state removal and failed-export recovery. The suite uses
-an isolated schema and temporary files; it does not corrupt live reports.
+Show the green local suite (45 tests plus 17 subtests), the separately executed
+Spark/Python parity test, and saved integration evidence covering replay, malformed
+inputs, expense corrections, missing/corrupt output repair, quarantine, archive
+loss, timestamp parity, conflict state removal and failed-export recovery. The
+integration checks use isolated state and do not corrupt live reports.
 
 ## 7:30-8:00 - Limitations and next steps
 
-Explain coupled raw/live writes, bounded driver bulks, no production authentication,
-no formal watermark finalization, small-file overhead and honest incomplete history.
-Show FINAL_SCOPE.md and explain explicitly deferred items.
+Explain independent raw/speed consumers, bounded serving batches, no production
+authentication, watermark finalization, small-file overhead and honest incomplete
+history. Show FINAL_SCOPE.md and explain explicitly deferred production hardening.
 
 ## Viva rehearsal
 
-Be ready to explain the completion-date rule; why duplicates differ from conflicts;
-why two separate API queries can mislabel a run; the role of archive checksums; why
-report publication is not a cross-system atomic transaction; replay after restart;
-why no observations cannot establish a zero-income day; and why a dashboard is not
-the same thing as an Airflow administration page.
+Use `VIVA_QA.md` for ten prepared questions and honest answers. Be ready to explain
+the completion-date rule, duplicates versus conflicts, archive checksums, publication
+atomicity, replay, null profitability, and the distinction between Grafana's business
+dashboard and Airflow's administration UI.
 
 ## Submission checklist
 

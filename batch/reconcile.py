@@ -21,11 +21,8 @@ def read_events(report_date, batch_ids):
     import s3fs
     from common.settings import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET
 
-    fs = s3fs.S3FileSystem(
-        client_kwargs={"endpoint_url": MINIO_ENDPOINT},
-        key=MINIO_ACCESS_KEY,
-        secret=MINIO_SECRET_KEY,
-    )
+    from common.archive import _get_fs
+    fs = _get_fs()
 
     for batch_id in batch_ids:
         # Only DB-committed archives are eligible; unfinished Spark writes are ignored.
@@ -89,11 +86,14 @@ def _run_day(report_date, batches=None):
         cur.execute("INSERT INTO pipeline_runs (run_id, dt, stage, status) VALUES (%s,%s,'reconcile','running')",
                     (run_id, report_date))
     try:
-        paths = verified_paths(DATA_DIR, batches, report_date)
+        paths = verified_paths(batches, report_date)
         with io.StringIO(contents.decode("utf-8"), newline="") as handle:
             rows = list(csv.DictReader(handle))
         if not rows:
             raise ValueError("Expense file has no rows")
+        with connection() as conn, conn.cursor() as cur:
+            # Keep the DQ denominator even when validation later fails.
+            cur.execute("UPDATE pipeline_runs SET rows_in=%s WHERE run_id=%s", (len(rows), run_id))
         valid, rejected = validate_expenses(rows, report_date, vehicles())
         if rejected:
             with connection() as conn, conn.cursor() as cur:
@@ -104,7 +104,7 @@ def _run_day(report_date, batches=None):
         if len(rejected) / len(rows) > DQ_FAILURE_THRESHOLD:
             raise ValueError(f"Data quality gate failed: {len(rejected)}/{len(rows)} invalid rows")
         from batch.spark_reconcile import aggregate
-        output, coverage = aggregate(paths, valid, report_date, vehicles())
+        output, coverage, zone_agg = aggregate(paths, valid, report_date, vehicles())
         conflicted_vehicles = {row["payload"].get("vehicle_id") for row in conflicts}
         for row in output:
             if row["vehicle_id"] in conflicted_vehicles:
@@ -120,13 +120,7 @@ def _run_day(report_date, batches=None):
                 execute_values(cur, "INSERT INTO daily_vehicle_profit (" + ",".join(columns) + ") VALUES %s",
                                [tuple(item[column] for column in columns) for item in output])
                 # Aggregate per-zone summary from the batch output
-                from collections import defaultdict as _dd
-                zone_agg = _dd(lambda: {"trips": 0, "revenue_cents": 0, "vehicles": 0})
-                for row in output:
-                    z = coverage.get(row["vehicle_id"], {}).get("zone", "UNKNOWN")
-                    zone_agg[z]["trips"] += row["trips"]
-                    zone_agg[z]["revenue_cents"] += row["revenue_cents"]
-                    zone_agg[z]["vehicles"] += 1
+                # zone_agg is already aggregated correctly per zone by aggregate()
                 execute_values(cur,
                     "INSERT INTO daily_zone_summary (dt,zone,trips,revenue_cents,vehicles) VALUES %s",
                     [(report_date, z, v["trips"], v["revenue_cents"], v["vehicles"])
@@ -265,66 +259,3 @@ def run_available():
 # ---------------------------------------------------------------------------
 # Stage-level helpers for the multi-stage Airflow DAG
 # (each callable maps to one task in daily_profitability_dag.py)
-# ---------------------------------------------------------------------------
-
-def next_available_date(batches=None):
-    """Return the oldest unprocessed date ready for reconciliation, or None."""
-    if batches is None:
-        batches = fetch_all("SELECT batch_id, max_event_ts, rows_valid, archive_manifest FROM pipeline_batches ORDER BY batch_id")
-    dates = {source.stem.removeprefix("expenses_") for source in
-             (DATA_DIR / "landing" / "expenses").glob("expenses_*.csv")}
-    timestamps = [b["max_event_ts"] for b in batches if b.get("max_event_ts")]
-    if not timestamps:
-        return None
-    boundary = max(timestamps)
-    day = SIM_START.date()
-    while day < boundary.date():
-        dates.add(day.isoformat())
-        day += timedelta(days=1)
-    published = {r["dt"].isoformat() for r in
-                 fetch_all("SELECT dt FROM daily_report_status WHERE export_status='published'")}
-    candidates = sorted(dates - published)
-    return candidates[0] if candidates else None
-
-
-def validate_day(report_date):
-    """Validate expense file for report_date; quarantine bad rows."""
-    run_day(report_date)  # full pipeline — stage split is additive
-
-
-def aggregate_day(report_date):
-    """Verify Parquet archive integrity for report_date."""
-    batches = fetch_all("SELECT batch_id, max_event_ts, rows_valid, archive_manifest FROM pipeline_batches ORDER BY batch_id")
-    paths = verified_paths(batches, report_date)
-    log("batch", "archive_verified", report_date=report_date, paths=len(paths))
-
-
-def join_and_compute_day(report_date):
-    """Alias — computation happens inside run_day."""
-    pass  # already done by validate_day -> run_day
-
-
-def publish_day(report_date):
-    """Alias — publish happens inside run_day."""
-    pass
-
-
-def render_day(report_date):
-    """Alias — CSV/HTML/JSON rendering happens inside run_day."""
-    pass
-
-
-def emit_metrics_day(report_date):
-    """Log a metrics event after a successful reconciliation."""
-    rows = fetch_all("SELECT count(*) AS n FROM daily_vehicle_profit WHERE dt=%s", (report_date,))
-    log("batch", "metrics_emitted", report_date=report_date, vehicles=rows[0]["n"] if rows else 0)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--date", type=date.fromisoformat)
-    args = parser.parse_args()
-    if args.date:
-        run_day(args.date.isoformat())
-    else:
-        run_available()

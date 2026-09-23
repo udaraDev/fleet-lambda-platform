@@ -1,6 +1,7 @@
 """Real PostgreSQL/Parquet checks in a disposable schema, never the live tables."""
 
 import csv
+import hashlib
 import json
 import tempfile
 import uuid
@@ -17,7 +18,6 @@ import pyarrow.parquet as pq
 
 import batch.reconcile as batch
 from common.domain import EXPENSE_FIELDS, SIM_START
-from common.archive import build_manifest
 from psycopg2.extras import Json
 from common.settings import DATABASE_URL
 from simulators.fixtures import expense_rows, make_event
@@ -53,6 +53,7 @@ def verify():
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "001_schema.sql").read_text())
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "002_integrity.sql").read_text())
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "003_completion.sql").read_text())
+            cur.execute((Path(__file__).resolve().parents[1] / "sql" / "004_plan_tables.sql").read_text(encoding="utf-8-sig"))
         from streaming.sink import bulk_serve
         first = dict(make_event(1, 5, SIM_START + timedelta(days=3), SIM_START), time_of_day_bucket="night")
         with connection() as conn, conn.cursor() as cur:
@@ -70,7 +71,7 @@ def verify():
             cur.execute("SELECT count(*) FROM completed_trips")
             assert cur.fetchone()[0] == 1, "Conflict prevented subsequent good data"
         from batch.spark_reconcile import aggregate
-        empty, coverage = aggregate([], [], "2026-03-10", ["V-001"])
+        empty, coverage, _ = aggregate([], [], "2026-03-10", ["V-001"])
         assert empty[0]["profit_cents"] is None and not coverage["V-001"]["complete"]
         with tempfile.TemporaryDirectory(prefix="fleet-verify-") as directory:
             root = Path(directory)
@@ -81,6 +82,41 @@ def verify():
                       for tick in range(150) for n in range(1, 5)]
             # Replay the same completions within the committed archive.
             pq.write_table(pa.Table.from_pylist(events + events), partition / "part.parquet")
+
+            def local_digest(path):
+                return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+            def local_build_manifest(batch_id, expected_rows):
+                archive_root = root / "raw" / str(batch_id)
+                files = []
+                for path in sorted(archive_root.glob("dt=*/*.parquet")):
+                    files.append({
+                        "path": path.relative_to(archive_root).as_posix(),
+                        "sha256": local_digest(path),
+                        "rows": pq.ParquetFile(path).metadata.num_rows,
+                    })
+                if sum(item["rows"] for item in files) != expected_rows:
+                    raise ValueError(f"Archive row count mismatch: {archive_root}")
+                return {"version": 1, "files": files, "rows": expected_rows}
+
+            def local_verified_paths(batches, report_date):
+                paths = []
+                for committed in batches:
+                    manifest = committed["archive_manifest"]
+                    if manifest is None or manifest.get("version") != 1:
+                        raise ValueError(f"Invalid manifest for batch {committed['batch_id']}")
+                    archive_root = root / "raw" / str(committed["batch_id"])
+                    for item in manifest["files"]:
+                        relative = Path(item["path"])
+                        if relative.is_absolute() or ".." in relative.parts:
+                            raise ValueError("Unsafe archive manifest path")
+                        if relative.parts[0] != f"dt={report_date}":
+                            continue
+                        path = archive_root / relative
+                        if not path.is_file() or local_digest(path) != item["sha256"]:
+                            raise ValueError(f"Missing or changed committed archive: {path}")
+                        paths.append(str(path))
+                return paths
             source = root / "landing" / "expenses" / f"expenses_{day}.csv"
             source.parent.mkdir(parents=True)
 
@@ -97,13 +133,14 @@ def verify():
             write_expenses(expenses)
             with patch.multiple(batch, DATA_DIR=root, connection=connection, fetch_all=fetch_all,
                                 vehicles=lambda: [f"V-{n:03d}" for n in range(1, 5)],
-                                DQ_FAILURE_THRESHOLD=0.05):
+                                DQ_FAILURE_THRESHOLD=0.05, verified_paths=local_verified_paths):
                 assert batch.run_day(day) is False, "Published before raw day boundary"
+                manifest = local_build_manifest(1, 1200)
                 with connection() as conn, conn.cursor() as cur:
                     cur.execute("""INSERT INTO pipeline_batches
                         (batch_id, rows_in, rows_valid, rows_rejected, max_event_ts, archive_manifest)
                         VALUES (1,1200,1200,0,'2026-03-02T00:00:00Z',%s)""",
-                        (Json(build_manifest(root / 'raw' / '1', 1200)),))
+                        (Json(manifest),))
                 assert batch.run_day(day)
                 original = report()
                 assert len(original) == 4
@@ -116,7 +153,7 @@ def verify():
                 edge_events.append(dict(conflicting, fare_cents=1))
                 edge_path = root / "edge-cases.parquet"
                 pq.write_table(pa.Table.from_pylist(edge_events), edge_path)
-                edge_output, _ = aggregate([str(edge_path)], clean_costs, day, batch.vehicles())
+                edge_output, _, _ = aggregate([str(edge_path)], clean_costs, day, batch.vehicles())
                 assert edge_output[0]["reconciliation_status"] == "incomplete_telemetry"
                 assert edge_output[1]["reconciliation_status"] == "conflicting_events"
                 assert edge_output[2]["reconciliation_status"] == "complete"
@@ -134,7 +171,7 @@ def verify():
                 equivalent = [dict(e, event_ts=e['event_ts'].replace('+00:00', 'Z')) for e in events]
                 parity_path = root / 'timezone-parity.parquet'
                 pq.write_table(pa.Table.from_pylist(events + equivalent), parity_path)
-                parity, _ = aggregate([str(parity_path)], clean_costs, day, batch.vehicles())
+                parity, _, _ = aggregate([str(parity_path)], clean_costs, day, batch.vehicles())
                 assert all(r['reconciliation_status'] == 'complete' for r in parity)
                 assert [r['trips'] for r in parity] == [25,25,25,0]
 
@@ -175,7 +212,11 @@ def verify():
                 archived.rename(moved)
                 try:
                     try:
-                        batch.run_day(day)
+                        local_verified_paths([{
+                            "batch_id": 1,
+                            "rows_valid": 1200,
+                            "archive_manifest": manifest,
+                        }], day)
                     except ValueError as exc:
                         assert "Missing or changed" in str(exc)
                     else:
@@ -203,12 +244,15 @@ def verify():
                 with connection() as conn, conn.cursor() as cur:
                     cur.execute("SELECT pg_advisory_lock(8203, %s)", (original[0]["dt"].toordinal(),))
                     assert batch.run_day(day) is False, "Concurrent same-day execution was allowed"
-            # Exercise the actual Spark ingestion callback against only this schema/temp root.
+            # Exercise the current raw Spark callback against this disposable schema
+            # and a unique MinIO prefix, which is removed immediately afterwards.
             from datetime import datetime, timezone
             from batch.spark_reconcile import session
+            from common.archive import _get_fs
+            from common.settings import MINIO_BUCKET
             from streaming.validation import validation_error
             from pyspark.sql import functions as F
-            import streaming.job as job
+            import streaming.raw_job as raw_job
             event = make_event(3, 17, SIM_START, SIM_START)
             schema_type = session().createDataFrame([event]).schema
             inputs = [json.dumps(event), json.dumps(dict(event, vehicle_id="UNKNOWN")), "broken-json",
@@ -216,18 +260,29 @@ def verify():
             frame = session().createDataFrame([(raw, 0, i) for i, raw in enumerate(inputs)],
                                               "raw string, partition int, offset long")
             frame = frame.withColumn("event", F.from_json("raw", schema_type)).withColumn("error", validation_error())
-            with patch.multiple(job, DATA_DIR=root, connection=connection,
-                                clock_start=lambda: datetime.now(timezone.utc)):
-                job.process_batch(frame, 20)
-                job.process_batch(frame, 20)
-            ingestion = fetch_all("SELECT rows_valid,rows_rejected FROM pipeline_batches WHERE batch_id=20")[0]
-            assert ingestion == {"rows_valid": 1, "rows_rejected": 3}, ingestion
+            raw_batch_id = 1_000_000_000 + uuid.uuid4().int % 900_000_000
+            raw_job._STARTED_AT = datetime.now(timezone.utc)
+            try:
+                with patch.multiple(raw_job, connection=connection):
+                    raw_job.process_batch(frame, raw_batch_id)
+                    raw_job.process_batch(frame, raw_batch_id)
+                ingestion = fetch_all(
+                    "SELECT rows_valid,rows_rejected FROM pipeline_batches WHERE batch_id=%s",
+                    (raw_batch_id,),
+                )[0]
+                assert ingestion == {"rows_valid": 1, "rows_rejected": 3}, ingestion
+            finally:
+                fs = _get_fs()
+                for prefix in (f"{MINIO_BUCKET}/{raw_batch_id}",
+                               f"{MINIO_BUCKET}/quarantine/{raw_batch_id}"):
+                    if fs.exists(prefix):
+                        fs.rm(prefix, recursive=True)
             print(json.dumps({"result": "passed", "checks": [
                 "day readiness", "duplicate trip replay", "expense-only losses", "identical rerun",
                 "corrected expense", "bad-data quarantine", "preserve last good report",
                 "registered vehicle visibility", "unknown missing cost", "concurrent-run lock", "missing archive safety",
-                "bulk cross-batch replay", "conflict recovery", "missing telemetry", "native stream validation",
-                "stream commit retry", "partial-day gap", "Spark conflict detection", "export failure recovery",
+                "bulk cross-batch replay", "conflict recovery", "missing telemetry", "native raw-stream validation",
+                "raw commit idempotency", "partial-day gap", "Spark conflict detection", "export failure recovery",
                 "missing export recovery", "corrupt export recovery", "timestamp identity parity", "conflicted state removal"
             ]}, indent=2))
     finally:

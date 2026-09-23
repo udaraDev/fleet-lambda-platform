@@ -11,29 +11,46 @@ import batch.reconcile as batch
 
 
 class IntegrityTests(unittest.TestCase):
-    @unittest.skip("Requires MinIO")
-    def test_missing_manifest_fails_closed(self):
+    @patch("common.archive.MINIO_BUCKET")
+    @patch("common.archive._get_fs")
+    def test_missing_manifest_fails_closed(self, mock_get_fs, mock_bucket):
         with self.assertRaisesRegex(ValueError, "no archive manifest"):
-            verified_paths(Path("unused"), [{"batch_id": 1}], "2026-03-01")
+            verified_paths([{"batch_id": 1}], "2026-03-01")
 
-    @unittest.skip("Requires MinIO")
-    def test_empty_committed_batch_is_legitimate(self):
-        manifest = build_manifest(Path("absent-empty-batch"), 0)
-        self.assertEqual(verified_paths(Path("unused"), [
+    @patch("common.archive.MINIO_BUCKET")
+    @patch("common.archive._get_fs")
+    def test_empty_committed_batch_is_legitimate(self, mock_get_fs, mock_bucket):
+        import fsspec
+        mock_get_fs.return_value = fsspec.filesystem("memory")
+        mock_bucket.__str__.return_value = "mem-bucket"
+        manifest = build_manifest(1, 0)
+        self.assertEqual(verified_paths([
             {"batch_id": 1, "rows_valid": 0, "archive_manifest": manifest}], "2026-03-01"), [])
 
-    @unittest.skip("Requires MinIO")
-    def test_missing_nonempty_archive_cannot_be_baselined(self):
-        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "row count mismatch"):
-            build_manifest(Path(directory), 1)
+    @patch("common.archive.MINIO_BUCKET")
+    @patch("common.archive._get_fs")
+    def test_missing_nonempty_archive_cannot_be_baselined(self, mock_get_fs, mock_bucket):
+        import fsspec
+        mock_get_fs.return_value = fsspec.filesystem("file")
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).as_posix()
+            mock_bucket.__str__.return_value = root
+            with self.assertRaisesRegex(ValueError, "row count mismatch"):
+                build_manifest(1, 1)
 
-    @unittest.skip("Requires MinIO")
-    def test_missing_file_rejected(self):
+    @patch("common.archive.MINIO_BUCKET")
+    @patch("common.archive._get_fs")
+    def test_missing_file_rejected(self, mock_get_fs, mock_bucket):
+        import fsspec
+        mock_get_fs.return_value = fsspec.filesystem("memory")
+        mock_bucket.__str__.return_value = "mem-bucket"
         manifest = {"version": 1, "rows": 1, "files": [
             {"path": "dt=2026-03-01/part.parquet", "sha256": "missing", "rows": 1}]}
         with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(ValueError, "Missing or changed"):
-            verified_paths(Path(directory), [{"batch_id": 1, "rows_valid": 1,
-                                              "archive_manifest": manifest}], "2026-03-01")
+            verified_paths([{"batch_id": 1, "rows_valid": 1,
+                                      "archive_manifest": manifest}], "2026-03-01")
 
     def test_one_bad_date_does_not_starve_later_dates(self):
         paths = [Path("expenses_2026-03-01.csv"), Path("expenses_2026-03-02.csv")]

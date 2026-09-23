@@ -9,10 +9,20 @@ ENV JAVA_HOME=/opt/java
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --timeout 120 --retries 10 --no-cache-dir -r requirements.txt
+COPY requirements-api.txt .
+RUN pip install --timeout 120 --retries 10 --no-cache-dir -r requirements-api.txt
 COPY scripts/check_spark.py scripts/check_spark.py
 USER 50000:0
-# Resolve the Kafka connector at build time; normal launches need no Maven download.
+# Resolve every Spark connector at build time; normal launches need no Maven download.
 RUN SPARK_LOCAL_IP=127.0.0.1 spark-submit --master 'local[1]' \
-    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6 scripts/check_spark.py
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
+    scripts/check_spark.py
+USER root
+# Put the resolved, version-pinned connectors on Spark's normal classpath. This
+# avoids runtime Maven access and avoids redistributing the large AWS bundle to
+# the local driver on every container start.
+RUN cp /home/fleet/.ivy2/jars/*.jar /usr/local/lib/python3.11/site-packages/pyspark/jars/ \
+    && chown -R 50000:0 /usr/local/lib/python3.11/site-packages/pyspark/jars
+USER 50000:0
 COPY . .
 CMD ["python", "-m", "simulators.producer_stream"]

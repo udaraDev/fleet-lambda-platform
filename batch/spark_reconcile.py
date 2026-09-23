@@ -38,7 +38,7 @@ def aggregate(paths, expenses, report_date, known_vehicles):
                  "fuel_cents": costs.get(v, {}).get("fuel_cents"),
                  "maintenance_cents": costs.get(v, {}).get("maintenance_cents"),
                  "profit_cents": None, "margin_pct": None, "is_unprofitable": None,
-                 "reconciliation_status": "incomplete_telemetry"} for v in sorted(known_vehicles)], coverage
+                 "reconciliation_status": "incomplete_telemetry"} for v in sorted(known_vehicles)], coverage, {}
     from pyspark.sql import functions as F, Window
 
     spark = session()
@@ -76,17 +76,19 @@ def aggregate(paths, expenses, report_date, known_vehicles):
         conflicted = {r.vehicle_id for r in conflicts.collect()}
         trips = completed.join(bad_trips.select("trip_id"), "trip_id", "left_anti").dropDuplicates(["trip_id"])
         totals = trips.groupBy("vehicle_id").agg(F.count("*").alias("trips"), F.sum("fare_cents").alias("revenue_cents"))
-        ordered = clean.select("vehicle_id", "event_time").distinct().withColumn(
+        ordered = clean.select("vehicle_id", "event_time", "zone").distinct().withColumn(
             "previous", F.lag("event_time").over(Window.partitionBy("vehicle_id").orderBy("event_time")))
         summary = ordered.groupBy("vehicle_id").agg(F.min("event_time").alias("first"),
             F.max("event_time").alias("last"), F.count("*").alias("observations"),
-            F.max(F.col("event_time").cast("double") - F.col("previous").cast("double")).alias("max_gap"))
+            F.max(F.col("event_time").cast("double") - F.col("previous").cast("double")).alias("max_gap"),
+            F.last("zone", ignorenulls=True).alias("zone"))
         for row in summary.collect():
             complete = ((row.first.replace(tzinfo=timezone.utc) - start).total_seconds() <= step + 0.001
                         and (end - row.last.replace(tzinfo=timezone.utc)).total_seconds() <= step + 0.001
                         and (row.max_gap or 0) <= step * 1.5 and row.observations >= expected_observations)
             coverage[row.vehicle_id] = {"complete": complete, "observations": row.observations,
-                                       "conflict": row.vehicle_id in conflicted}
+                                       "conflict": row.vehicle_id in conflicted,
+                                       "zone": getattr(row, "zone", "UNKNOWN")}
     else:
         totals = spark.createDataFrame([], "vehicle_id string, trips long, revenue_cents long")
     for vehicle in known_vehicles:
@@ -104,6 +106,15 @@ def aggregate(paths, expenses, report_date, known_vehicles):
                           F.round(F.col("profit_cents") * 100.0 / F.col("revenue_cents"), 2)))
               .withColumn("is_unprofitable", F.col("profit_cents") < 0)
               .withColumn("dt", F.lit(report_date)))
+    # Financial zone totals come from conflict-free completed trips. ``ordered``
+    # intentionally contains only telemetry coverage columns.
+    zone_summary = trips.groupBy("zone").agg(
+        F.count("*").alias("trips"),
+        F.sum("fare_cents").alias("revenue_cents"),
+        F.approx_count_distinct("vehicle_id").alias("vehicles")
+    )
+    zone_agg = {r.zone: {"trips": r.trips, "revenue_cents": r.revenue_cents, "vehicles": r.vehicles} for r in zone_summary.collect()}
+
     columns = ["dt", "vehicle_id", "trips", "revenue_cents", "fuel_cents", "maintenance_cents",
                "profit_cents", "margin_pct", "is_unprofitable", "reconciliation_status"]
-    return [r.asDict() for r in result.select(*columns).orderBy("vehicle_id").collect()], coverage
+    return [r.asDict() for r in result.select(*columns).orderBy("vehicle_id").collect()], coverage, zone_agg

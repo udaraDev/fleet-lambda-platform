@@ -1,7 +1,7 @@
 import hashlib
 import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -136,11 +136,18 @@ class SparkPythonParityTests(unittest.TestCase):
             raise unittest.SkipTest("Parity test needs pyarrow") from exc
 
         from common.domain import reconcile, validate_expenses
-        from simulators.fixtures import sample_events, expense_rows
+        from simulators.fixtures import make_event, expense_rows
+        from common.settings import EVENT_INTERVAL_SECONDS, SIM_DAY_SECONDS
 
         day = "2026-03-01"
         known = {"V-001", "V-002", "V-003"}
-        events = sample_events()
+        step = EVENT_INTERVAL_SECONDS * 86400 / SIM_DAY_SECONDS
+        observations = round(SIM_DAY_SECONDS / EVENT_INTERVAL_SECONDS)
+        events = [
+            make_event(vehicle, tick, SIM_START + timedelta(seconds=tick * step), SIM_START)
+            for tick in range(observations)
+            for vehicle in range(1, 4)
+        ]
         raw_costs = list(expense_rows(day, 3))
         expenses, _ = validate_expenses(raw_costs, day, known)
 
@@ -153,10 +160,18 @@ class SparkPythonParityTests(unittest.TestCase):
             pq.write_table(pa.Table.from_pylist(events), parquet_path)
 
             try:
-                from batch.spark_reconcile import aggregate
-                spark_rows, _ = aggregate([str(parquet_path)], expenses, day, known)
+                from batch import spark_reconcile
+                spark_rows, _, zone_rows = spark_reconcile.aggregate(
+                    [str(parquet_path)], expenses, day, known
+                )
             except ModuleNotFoundError as exc:
                 raise unittest.SkipTest("Parity test needs pyspark") from exc
+            finally:
+                if "spark_reconcile" in locals() and spark_reconcile._session is not None:
+                    spark_reconcile._session.stop()
+                    spark_reconcile._session = None
+
+        self.assertTrue(zone_rows, "Spark batch must produce a non-empty zone summary")
 
         python_rows = reconcile(events, expenses, day)
         spark_by_v = {r["vehicle_id"]: r for r in spark_rows}
@@ -177,4 +192,3 @@ class SparkPythonParityTests(unittest.TestCase):
                                  f"{vehicle}: is_unprofitable mismatch")
                 self.assertEqual(s["reconciliation_status"], p["reconciliation_status"],
                                  f"{vehicle}: reconciliation_status mismatch")
-

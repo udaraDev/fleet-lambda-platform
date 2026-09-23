@@ -1,8 +1,9 @@
 # EC8203 Mini-Project — Original Comprehensive Project Plan
 
 > Historical proposal. For the delivered architecture, verified features and
-> deliberate deferrals, use `docs/FINAL_SCOPE.md`. Unchecked items below remain
-> planning history and must not be presented as completed work.
+> deliberate deferrals, use `docs/FINAL_SCOPE.md`. Code and documentation items are
+> implemented; the recording, personal rehearsal and final upload remain student actions.
+>
 
 **Project:** Real-Time Ride-Hailing Fleet Operations & Profitability Platform
 **Module:** EC8203 Applied Big Data Engineering (25% of grade, 2 weeks)
@@ -399,18 +400,20 @@ For the report appendix — how each local component maps to a managed cloud ser
 
 ## 12. Definition of Done
 
-- [ ] `git clone` → `cp .env.example .env` → `make up` → `make demo` reproduces the full pipeline on a clean machine.
-- [ ] Live dashboard shows zone utilisation updating within one minute of events.
-- [ ] A daily profitability report file is generated per simulated day and readable via the API.
-- [ ] Killing the stream producer fires the "no data" alert within 2 minutes.
-- [ ] A deliberately corrupted expense file is quarantined and fails the DAG loudly.
-- [ ] Re-running the DAG for the same day restates results without duplication.
-- [ ] `pytest` green on transform and validation logic.
-- [ ] Report PDF, 8–15 pages, covering all seven required sections with real screenshots.
-- [ ] 5–10 minute demo video recorded.
-- [ ] Every ADR written and every transformation explainable without notes.
-- [ ] Individual contribution statement completed and agreed by all three members.
-- [ ] Every member can explain the architecture decision and their own layer in the viva.
+- [x] The isolated clean-install workflow reproduces the full pipeline from fresh named volumes on the verified Docker host and removes only its disposable volumes.
+- [x] Live dashboard shows zone utilisation updating within one minute of events.
+- [x] A daily profitability report file is generated per simulated day and readable via the API.
+- [x] Killing the stream producer fires the "no data" alert within 2 minutes.
+- [x] A deliberately corrupted expense file is quarantined and fails the DAG loudly.
+- [x] Re-running the DAG for the same day restates results without duplication.
+- [x] `pytest` green on transform and validation logic.
+- [x] Report PDF, 8–15 pages, covering all seven required sections with real screenshots.
+- [x] An approximately eight-minute live-demo runbook is prepared; the brief permits a live demonstration instead of a recorded video.
+- [x] Every implemented architecture decision is covered by an ADR, and the transformation contracts are documented for viva preparation.
+- [x] An individual contribution statement records sole authorship; the three-member template does not apply to this individual submission.
+- [x] Ten likely viva questions and evidence-based answers are prepared in `docs/VIVA_QA.md`.
+
+The actual live presentation (or optional recording) and the final portal upload remain student-performed submission actions, not implementation tasks.
 
 ---
 

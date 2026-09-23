@@ -1,5 +1,7 @@
 # Project review after priority fixes
 
+> **Historical audit snapshot (22 September 2026).** Later remediation superseded the incomplete findings below. Use `FINAL_SCOPE.md` and `output/evidence/final-verification.json` for the delivered state.
+
 Reviewed 22 September 2026 (Asia/Colombo). Read-only implementation review against PROJECT_PLAN.md and the five-page EC8203 assessment brief. This supersedes the remaining-task conclusions in PROJECT_REVIEW.md where fixes have since landed. No implementation or live data was changed for this review.
 
 ## Verdict

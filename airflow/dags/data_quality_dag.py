@@ -1,13 +1,13 @@
-﻿"""Data Quality DAG — separate observability pipeline per PROJECT_PLAN.md §5.1.
+"""Data Quality DAG — separate observability pipeline per PROJECT_PLAN.md §5.1.
 
 Runs every 5 minutes and checks:
-  1. Quarantine rate for the latest expense file (should be < DQ_FAILURE_THRESHOLD).
+  1. Quarantine rate for recent expense runs (should be <= DQ_FAILURE_THRESHOLD).
   2. Dead-letter accumulation rate (should be near zero).
-  3. Archive manifest integrity for all committed batches.
-  4. Report export SHA-256 for all published dates.
+  3. Archive manifest integrity for every committed batch.
+  4. Report export SHA-256 for every published date.
 
-Raises an alert (503 on /health/reports) and logs a structured DQ_ALERT event
-if any check fails.  Does NOT reprocess data — that is the profitability DAG.
+Fails the relevant Airflow task and logs a structured DQ event if a check fails.
+It does not reprocess data; that is the profitability DAG's responsibility.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -23,15 +23,16 @@ def _check_quarantine_rate(**ctx):
     from common.logging_conf import log
 
     rows = fetch_all("""
-        SELECT dt,
-               count(*) AS bad_rows,
-               (SELECT count(*) FROM daily_vehicle_profit p WHERE p.dt = q.dt) AS total_vehicles
-        FROM dq_quarantine q
-        WHERE received_at > now() - interval '10 minutes'
-        GROUP BY dt
+        WITH recent AS (
+            SELECT run_id,dt,rows_in FROM pipeline_runs
+            WHERE started_at > now() - interval '24 hours' AND rows_in IS NOT NULL
+        )
+        SELECT r.run_id,r.dt,r.rows_in AS total_rows,count(q.id) AS bad_rows
+        FROM recent r LEFT JOIN dq_quarantine q ON q.run_id=r.run_id
+        GROUP BY r.run_id,r.dt,r.rows_in
     """)
     for row in rows:
-        if row["total_vehicles"] and row["bad_rows"] / max(row["total_vehicles"], 1) > DQ_FAILURE_THRESHOLD:
+        if row["total_rows"] and row["bad_rows"] / row["total_rows"] > DQ_FAILURE_THRESHOLD:
             log("dq_dag", "quarantine_rate_exceeded",
                 dt=str(row["dt"]), bad=row["bad_rows"], threshold=DQ_FAILURE_THRESHOLD)
             raise ValueError(f"DQ quarantine rate exceeded for {row['dt']}: {row['bad_rows']} bad rows")
@@ -55,20 +56,31 @@ def _check_dead_letter_rate(**ctx):
 
 
 def _check_archive_integrity(**ctx):
-    """Verify SHA-256 manifests for all committed batches in the last 10 minutes."""
+    """Verify SHA-256 manifests for every committed batch."""
     from common.db import fetch_all
-    from common.archive import verify_manifest
-    from common.settings import DATA_DIR
+    from common.archive import _get_fs, digest
+    from common.settings import MINIO_BUCKET
     from common.logging_conf import log
 
     batches = fetch_all("""
-        SELECT batch_id, archive_manifest FROM pipeline_batches
-        WHERE committed_at > now() - interval '10 minutes'
+        SELECT batch_id, archive_manifest, rows_valid FROM pipeline_batches
+        ORDER BY batch_id
     """)
     failed = []
+    fs = _get_fs()
     for b in batches:
         manifest = b.get("archive_manifest") or {}
-        ok = verify_manifest(DATA_DIR, b["batch_id"], manifest)
+        if not manifest or manifest.get("rows") != b.get("rows_valid"):
+            failed.append(b["batch_id"])
+            continue
+
+        root = f"{MINIO_BUCKET}/{b['batch_id']}"
+        ok = True
+        for item in manifest.get("files", []):
+            path = f"{root}/{item['path']}"
+            if not fs.exists(path) or digest(path) != item["sha256"]:
+                ok = False
+                break
         if not ok:
             failed.append(b["batch_id"])
     if failed:
@@ -88,7 +100,7 @@ def _check_export_integrity(**ctx):
         SELECT dt, output_sha256, algorithm_version
         FROM daily_report_status
         WHERE export_status = 'published'
-        ORDER BY dt DESC LIMIT 30
+        ORDER BY dt DESC
     """)
     bad, old = [], []
     for r in exports:

@@ -62,10 +62,10 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_count_completed_trips_not_telemetry(self):
         result = reconcile(sample_events(), self.costs, self.day)
-        self.assertEqual(result[0]["trips"], 2)
-        self.assertEqual(result[0]["revenue_cents"], 65000)
-        self.assertEqual(result[0]["profit_cents"], -135000)
-        self.assertTrue(result[0]["is_unprofitable"])
+        self.assertEqual(result[0]["trips"], 25)
+        self.assertEqual(result[0]["revenue_cents"], 812500)
+        self.assertEqual(result[0]["profit_cents"], 612500)
+        self.assertFalse(result[0]["is_unprofitable"])
 
     def test_duplicate_event_or_trip_does_not_change_result(self):
         events = sample_events()
