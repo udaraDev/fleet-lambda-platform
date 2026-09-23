@@ -11,6 +11,36 @@ import batch.reconcile as batch
 
 
 class IntegrityTests(unittest.TestCase):
+    def test_unchanged_verified_report_supersedes_recovered_orphan(self):
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expenses = root / "landing" / "expenses"
+            expenses.mkdir(parents=True)
+            (expenses / "expenses_2026-03-01.csv").write_text(
+                "vehicle_id,fuel_cents,maintenance_cents\nV-001,1,1\n", encoding="utf-8")
+            target = root / "reports" / "profitability_2026-03-01.json"
+            target.parent.mkdir()
+            target.write_text("{}", encoding="utf-8")
+            conn, cur = MagicMock(), MagicMock()
+            conn.__enter__.return_value = conn
+            conn.cursor.return_value.__enter__.return_value = cur
+            with patch.object(batch, "DATA_DIR", root), \
+                    patch.object(batch, "export_matches", return_value=True), \
+                    patch.object(batch.hashlib, "sha256") as digest_mock, \
+                    patch.object(batch, "fetch_all", side_effect=[[], [{
+                        "input_fingerprint": "same", "export_status": "published",
+                        "output_sha256": "hash"}]]), \
+                    patch.object(batch, "connection", return_value=conn):
+                digest_mock.return_value.hexdigest.return_value = "same"
+                result = batch._run_day("2026-03-01", [{
+                    "batch_id": 1, "max_event_ts": datetime(2026, 3, 2, tzinfo=timezone.utc),
+                    "rows_valid": 0, "archive_manifest": {"files": []}}])
+            self.assertEqual(result, "unchanged")
+            self.assertTrue(any("status='superseded'" in call.args[0]
+                                for call in cur.execute.call_args_list))
     @patch("common.archive.MINIO_BUCKET")
     @patch("common.archive._get_fs")
     def test_missing_manifest_fails_closed(self, mock_get_fs, mock_bucket):

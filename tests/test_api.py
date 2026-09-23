@@ -44,6 +44,21 @@ class ApiTests(unittest.TestCase):
     def test_invalid_date_and_threshold_are_rejected(self):
         self.assertEqual(self.client.get("/reports/daily/not-a-date").status_code, 422)
         self.assertEqual(self.client.get("/alerts/active?idle_minutes=-1").status_code, 422)
+        self.assertEqual(self.client.get("/metrics/zones?window=0").status_code, 422)
+
+    @patch("api.main.fetch_all", return_value=[])
+    def test_zone_window_parameter_reaches_window_table(self, fetch):
+        self.assertEqual(self.client.get("/metrics/zones?window=30").status_code, 200)
+        sql, params = fetch.call_args.args
+        self.assertIn("rt_zone_metrics", sql)
+        self.assertEqual(params, (30, 30))
+
+    @patch("api.main.fetch_all", return_value=[])
+    def test_alert_idle_threshold_is_applied(self, fetch):
+        self.assertEqual(self.client.get("/alerts/active?idle_minutes=45").status_code, 200)
+        sql, params = fetch.call_args.args
+        self.assertIn("idle_minutes", sql)
+        self.assertEqual(params, (45,))
 
     @patch("api.main.fetch_all")
     def test_report_preserves_unknown_profit(self, fetch):

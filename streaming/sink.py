@@ -47,6 +47,53 @@ def fingerprint(item):
     return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
 
 
+def _reconcile_metric_events(cur, accepted, conflicting_ids, bad_trips, conflict_payloads):
+    """Maintain retractable inputs for windows that contain a conflict.
+
+    Spark remains the normal window calculator.  This compact contribution table
+    lets the authoritative serving transaction retract a previously accepted
+    event and recompute only affected minute/zone keys.  Corrected rows are
+    protected from later, non-retracting Spark update-mode output.
+    """
+    affected = set()
+    if conflicting_ids or bad_trips:
+        cur.execute("""SELECT window_start,zone FROM rt_zone_metric_events
+            WHERE event_id=ANY(%s) OR trip_id=ANY(%s)""",
+            (list(conflicting_ids), list(bad_trips)))
+        affected.update(cur.fetchall())
+        cur.execute("""DELETE FROM rt_zone_metric_events
+            WHERE event_id=ANY(%s) OR trip_id=ANY(%s)""",
+            (list(conflicting_ids), list(bad_trips)))
+    for payload in conflict_payloads:
+        if payload.get("event_ts") and payload.get("zone"):
+            affected.add((parse_timestamp(payload["event_ts"]).replace(second=0, microsecond=0), payload["zone"]))
+    if accepted:
+        execute_values(cur, """INSERT INTO rt_zone_metric_events
+            (event_id,trip_id,fingerprint,window_start,zone,vehicle_id,status,trip_completed,fare_cents)
+            VALUES %s ON CONFLICT(event_id) DO NOTHING""", [
+            (e["event_id"], e.get("trip_id"), fingerprint(e),
+             parse_timestamp(e["event_ts"]).replace(second=0, microsecond=0),
+             e["zone"], e["vehicle_id"], e["status"], e["trip_completed"], e["fare_cents"])
+            for e in accepted])
+    for window_start, zone in affected:
+        cur.execute("""INSERT INTO rt_zone_metrics
+            (window_start,zone,reporting_vehicles,active_vehicles,idle_ratio,trips,earnings_cents,authoritative_corrected)
+            SELECT %s,%s,
+                count(DISTINCT vehicle_id),
+                count(DISTINCT vehicle_id) FILTER (WHERE status <> 'idle'),
+                count(DISTINCT vehicle_id) FILTER (WHERE status = 'idle')::numeric /
+                    NULLIF(count(DISTINCT vehicle_id),0),
+                count(*) FILTER (WHERE trip_completed),
+                COALESCE(sum(fare_cents) FILTER (WHERE trip_completed),0),true
+            FROM rt_zone_metric_events WHERE window_start=%s AND zone=%s
+            ON CONFLICT(window_start,zone) DO UPDATE SET
+                reporting_vehicles=EXCLUDED.reporting_vehicles,
+                active_vehicles=EXCLUDED.active_vehicles,idle_ratio=EXCLUDED.idle_ratio,
+                trips=EXCLUDED.trips,earnings_cents=EXCLUDED.earnings_cents,
+                authoritative_corrected=true,updated_at=now()""",
+            (window_start, zone, window_start, zone))
+
+
 def bulk_serve(cur, events, batch_id):
     if not events:
         return 0
@@ -110,6 +157,9 @@ def bulk_serve(cur, events, batch_id):
         cur.execute("""DELETE FROM rt_vehicle_state WHERE event_id=ANY(%s) OR event_id IN
             (SELECT event_id FROM stream_event_keys WHERE trip_id=ANY(%s))""",
             (list(conflicting_ids), list(bad_trips)))
+    _reconcile_metric_events(cur, accepted, conflicting_ids, bad_trips,
+                             [item for copies in by_id.values() for item in copies
+                              if item["event_id"] in conflicting_ids or item.get("trip_id") in bad_trips])
     if not accepted:
         return len(rejected)
     cur.execute("""SELECT vehicle_id,zone,status,idle_since,event_ts,event_id,trace_id

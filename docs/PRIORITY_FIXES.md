@@ -65,7 +65,12 @@ missing observations honestly, not to fabricate historical telemetry. Historical
 reports are restated gradually; a report without publication metadata is legacy and
 has not yet been checked under the new coverage rules.
 
-## Remaining audit work
+## Historical remaining audit work (completed or superseded)
+
+The following was the backlog on 22 September 2026. Formal windows, separate
+consumers, MinIO, Prometheus/Grafana, diagrams and submission evidence were
+subsequently implemented. The scaling and production-operations items remain
+deliberate limitations in `FINAL_SCOPE.md`, not unfinished assessment requirements.
 
 - Formal event-time window aggregates and watermark policy; current speed metrics
   remain SQL lookbacks. Choose units deliberately: each 2-real-second source tick

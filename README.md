@@ -29,6 +29,11 @@ event identities. Baseline hashes detect future changes, not alterations made be
 the migration. If a file/count is missing, migration fails instead of inventing data.
 Only restart upgraded writers after it succeeds.
 
+If a hard shutdown left a legacy Parquet file truncated but the corresponding Kafka
+offset range is retained, recover only the named batches with
+`python -m scripts.recover_legacy_archive <batch-id> ...`. The recovery verifies
+committed row counts and persistent event fingerprints before replacing a manifest.
+
 ## Architecture
 
 ```text
@@ -71,7 +76,8 @@ successful setup; this is expected. Other services should remain running.
 - API documentation: <http://localhost:8001/docs>
 - Business results page: <http://localhost:8001/>
 - Live fleet metrics: <http://localhost:8001/metrics/fleet>
-- Zone metrics: <http://localhost:8001/metrics/zones>
+- Zone metrics: <http://localhost:8001/metrics/zones?window=15> (1-1440 simulated minutes)
+- Active alerts: <http://localhost:8001/alerts/active?idle_minutes=15>
 - Time-of-day earnings: <http://localhost:8001/metrics/time-of-day?report_date=2026-03-01>
 - Pipeline health: <http://localhost:8001/health/pipeline>
 - Batch/report health: <http://localhost:8001/health/reports>

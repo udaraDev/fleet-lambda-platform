@@ -113,7 +113,7 @@ story += [Spacer(1,35*mm), p('FLEET LAMBDA PLATFORM','TitleX'),
           p('Real-time ride-hailing operations and daily profitability reconciliation','SubTitle'),
           Spacer(1,18*mm), p('<b>EC8203 Applied Big Data Engineering Mini-Project</b>','SubTitle'),
           Spacer(1,22*mm), table([['Author','Programme'],['Udara Subodhitha Senevirathna','BSc Computer Engineering'],
-          ['Institution','University of Ruhuna'],['Report date','22 September 2026']], [65*mm,80*mm],8.5),
+          ['Institution','University of Ruhuna'],['Report date','23 September 2026']], [65*mm,80*mm],8.5),
           Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation and measured checks. It distinguishes local classroom evidence from production claims and does not claim a recorded demo video or production-scale capacity.','Callout'),
           PageBreak()]
 
@@ -147,7 +147,7 @@ story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
 
 story += [p('3. Delivered architecture and data flow','H1X'), Architecture(),
  p('Figure 1. Delivered local Lambda architecture. Kafka feeds independent speed and raw consumers; PostgreSQL serves FastAPI and Prometheus is visualised in Grafana. The MinIO archive, database and checkpoints are operated as one dataset.' ,'Small'),
- p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
+ p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. Per-event metric contributions allow the serving transaction to retract a discredited identity or trip and protect the corrected window from a later non-retracting Spark update. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
  PageBreak(), p('Storage contracts','H2X')] + bullets([
  'Raw MinIO Parquet files are accepted only through committed batch manifests containing row counts and SHA-256 digests.',
  'PostgreSQL stores latest vehicle state, completed trips, persistent event identities, conflicts, quarantine, run history and daily profitability.',
@@ -175,7 +175,7 @@ story += [p('5. Implementation','H1X'), p('Streaming path','H2X')] + bullets([
  'All registered vehicles remain visible. Complete telemetry plus expenses yields profit; missing telemetry, conflicts or missing expenses yields a null profit with a quality status.',
  'A greater-than-five-percent expense rejection rate fails that date without replacing the last good result. Other dates continue and the Airflow task reports a failure summary.',
  'Database rows move to pending before file export. Atomic file replacement then publishes a digest. Missing/corrupt published files are automatically regenerated.']) + [
- p('Serving semantics','H2X'), p('Live fleet and zone endpoints use latest-state and rolling simulated-time lookbacks. They are explicitly labelled indicative. The daily endpoint returns vehicle rows and publication metadata from one SQL statement, avoiding mismatched versions during concurrent publication. The browser page refreshes every 15 seconds and presents LKR values, report quality and algorithm version.'), PageBreak()]
+ p('Serving semantics','H2X'), p('The live fleet endpoint uses a latest-state simulated-time lookback. The zone endpoint accepts a 1-1440 minute window and reads Spark event-time rows, including conflict-retracted windows. Both are explicitly labelled indicative. The daily endpoint returns vehicle rows and publication metadata from one SQL statement, avoiding mismatched versions during concurrent publication. The browser page refreshes every 15 seconds and presents LKR values, report quality and algorithm version.'), PageBreak()]
 
 story += [p('6. Observability and failure behaviour','H1X'), table([
  ['Signal','Detection','Response / meaning'],
@@ -193,15 +193,15 @@ story += [p('6. Observability and failure behaviour','H1X'), table([
 story += [p('7. Results and business output','H1X'),
  p('The running platform exposes a consolidated business page at http://localhost:8001. It combines current reporting/active vehicles, idle ratio, hourly earnings, zone activity and a selectable daily vehicle profitability table. It also states the report run, publication state, algorithm version and quality outcome.'),
  Image(str(ROOT / 'output' / 'evidence' / 'dashboard.png'), width=165*mm, height=105*mm),
- p('Figure 2. Actual local results page captured after the version-4 restatement. The visible table shows genuine parked-vehicle losses and completed profitable vehicle-days.','Small'),
+ p('Figure 2. Actual local results page showing healthy ingestion, the live fleet summary and the parameterised Spark event-time zone view. The selectable daily table continues below the captured viewport.','Small'),
  p('Verified snapshots','H2X'), table([
  ['Evidence','Observed result'],
- ['Automated unit/API/archive tests','45 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
+ ['Automated unit/API/archive tests','48 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
  ['Isolated Spark/PostgreSQL suite','23 named checks passed; disposable schema and temporary files'],
  ['Fresh volumes','Sixteen-service Compose definition; DAG imports, report, live, MinIO and monitoring checks'],
  ['Short throughput smoke test','10/100/500 target eps: all 30/300/1,500 events accepted; p95 latency 8.48/6.03/6.15 s'],
- ['Final report-integrity health','Healthy; 209 dates; zero missing, invalid, outdated, failed, stalled or pending'],
- ['Final result quality snapshot','788 complete vehicle-days; 1,720 incomplete-telemetry vehicle-days']], [61*mm,104*mm]),
+ ['Final report-integrity health','Healthy; 280 dates; zero missing, invalid, outdated, failed, stalled or pending'],
+ ['Final result quality snapshot','1,568 complete vehicle-days; 1,792 incomplete-telemetry vehicle-days']], [61*mm,104*mm]),
  p('The historical counts are a dated snapshot, not a performance benchmark. Incomplete days reflect real downtime in the persistent demonstration dataset. All retained dates were restated under algorithm version 4 so export digests and identity semantics were recalculated rather than inherited.','Callout'), PageBreak()]
 
 story += [p('8. Verification and reproducibility','H1X'),

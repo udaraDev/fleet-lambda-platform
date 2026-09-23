@@ -76,14 +76,16 @@ def process_metrics_batch(frame, batch_id):
     with connection() as conn, conn.cursor() as cur:
         execute_values(cur, """
             INSERT INTO rt_zone_metrics
-            (window_start, zone, active_vehicles, idle_ratio, trips, earnings_cents)
+            (window_start, zone, reporting_vehicles, active_vehicles, idle_ratio, trips, earnings_cents)
             VALUES %s ON CONFLICT (window_start, zone) DO UPDATE SET
+            reporting_vehicles=EXCLUDED.reporting_vehicles,
             active_vehicles=EXCLUDED.active_vehicles, 
             idle_ratio=EXCLUDED.idle_ratio,
             trips=EXCLUDED.trips, 
             earnings_cents=EXCLUDED.earnings_cents, 
             updated_at=now()
-        """, [(r["window_start"], r["zone"], r["active_vehicles"], r["idle_ratio"], 
+            WHERE NOT rt_zone_metrics.authoritative_corrected
+        """, [(r["window_start"], r["zone"], r["reporting"], r["active_vehicles"], r["idle_ratio"],
                r["trips"], r["earnings_cents"]) for r in metrics])
     log("streaming-speed", "metrics_committed", batch_id=batch_id, zones=len(metrics))
 
@@ -150,7 +152,7 @@ def main():
         F.sum(F.when(F.col("trip_completed"), F.col("fare_cents")).otherwise(0)).alias("earnings_cents")
     ).select(
         F.col("window.start").alias("window_start"),
-        "zone", "active_vehicles", "idle_ratio", "trips", "earnings_cents"
+        "zone", "reporting", "active_vehicles", "idle_ratio", "trips", "earnings_cents"
     )
     
     q2 = windowed.writeStream.foreachBatch(process_metrics_batch).outputMode("update").option(

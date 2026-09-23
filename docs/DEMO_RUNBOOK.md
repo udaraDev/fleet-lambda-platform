@@ -39,7 +39,7 @@ If the terminal is forcibly killed, run `docker compose start producer-stream`.
 
 ## 6:30-7:30 - Correctness evidence
 
-Show the green local suite (45 tests plus 17 subtests), the separately executed
+Show the green local suite (48 tests plus 17 subtests), the separately executed
 Spark/Python parity test, and saved integration evidence covering replay, malformed
 inputs, expense corrections, missing/corrupt output repair, quarantine, archive
 loss, timestamp parity, conflict state removal and failed-export recovery. The

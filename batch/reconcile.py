@@ -79,6 +79,16 @@ def _run_day(report_date, batches=None):
     if (previous and previous[0]["input_fingerprint"] == fingerprint
             and previous[0]["export_status"] == "published"
             and export_matches(target, previous[0]["output_sha256"])):
+        # A process can be interrupted after creating a run but before doing any
+        # work.  run_day() closes that orphan as failed.  If the inputs and the
+        # published artifact still match, the recovered run is no longer an
+        # unresolved failure and must not poison /health/reports forever.
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute("""UPDATE pipeline_runs
+                SET status='superseded', ended_at=COALESCE(ended_at, now())
+                WHERE dt=%s AND stage='reconcile' AND status='failed'
+                  AND error='orphaned run recovered after process interruption'""",
+                (report_date,))
         return "unchanged"
     # Inputs changed or no verified publication — start a tracked run.
     run_id = str(uuid.uuid4())

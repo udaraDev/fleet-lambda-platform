@@ -20,6 +20,10 @@ Unknown, missing and conflicting evidence never becomes a claimed profit/loss.
 All advanced features have been implemented and validated, including:
 - Formal Spark tumbling windows and watermarks via `speed_job.py`.
 - MinIO storage and separate raw/speed consumers. Raw records are archived directly to MinIO.
+- One-minute Spark window rows are backed by per-event contributions so a later
+  identity/trip conflict retracts the discredited contribution transactionally.
+- `/metrics/zones?window=N` reads those event-time rows; `/alerts/active` applies
+  its requested idle-minute threshold rather than exposing an ignored parameter.
 - Prometheus server and Grafana dashboards for pipeline health and business metrics.
 - Separate Airflow profitability and data-quality DAGs. Profitability is one
   idempotent task so date discovery, transaction boundaries and failure collection

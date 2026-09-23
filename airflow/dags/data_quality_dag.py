@@ -1,6 +1,6 @@
 """Data Quality DAG — separate observability pipeline per PROJECT_PLAN.md §5.1.
 
-Runs every 5 minutes and checks:
+Runs hourly and checks:
   1. Quarantine rate for recent expense runs (should be <= DQ_FAILURE_THRESHOLD).
   2. Dead-letter accumulation rate (should be near zero).
   3. Archive manifest integrity for every committed batch.
@@ -62,6 +62,8 @@ def _check_archive_integrity(**ctx):
     from common.settings import MINIO_BUCKET
     from common.logging_conf import log
 
+    import logging
+    logging.getLogger("botocore.httpchecksum").setLevel(logging.WARNING)
     batches = fetch_all("""
         SELECT batch_id, archive_manifest, rows_valid FROM pipeline_batches
         ORDER BY batch_id
@@ -78,7 +80,11 @@ def _check_archive_integrity(**ctx):
         ok = True
         for item in manifest.get("files", []):
             path = f"{root}/{item['path']}"
-            if not fs.exists(path) or digest(path) != item["sha256"]:
+            try:
+                matches = digest(path, fs) == item["sha256"]
+            except (FileNotFoundError, OSError):
+                matches = False
+            if not matches:
                 ok = False
                 break
         if not ok:
@@ -124,7 +130,7 @@ with DAG(
     dag_id="data_quality",
     description="Continuous DQ observability: quarantine rate, dead-letters, archive and export integrity",
     start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    schedule="*/5 * * * *",
+    schedule="0 * * * *",
     catchup=False,
     max_active_runs=1,
     is_paused_upon_creation=False,

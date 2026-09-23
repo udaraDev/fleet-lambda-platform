@@ -6,6 +6,7 @@
 CREATE TABLE IF NOT EXISTS rt_zone_metrics (
     window_start  timestamptz NOT NULL,
     zone          text        NOT NULL,
+    reporting_vehicles integer NOT NULL DEFAULT 0,
     active_vehicles integer   NOT NULL DEFAULT 0,
     idle_ratio    numeric,
     trips         integer     NOT NULL DEFAULT 0,

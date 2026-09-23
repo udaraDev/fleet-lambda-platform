@@ -41,7 +41,7 @@
   <rect x="415" y="105" width="165" height="55" rx="6" fill="#1B3A2B" stroke="#3FB950" stroke-width="1"/>
   <text x="497" y="128" text-anchor="middle" font-size="11" fill="#C9D1D9">Spark Structured</text>
   <text x="497" y="143" text-anchor="middle" font-size="11" fill="#C9D1D9">Streaming</text>
-  <text x="497" y="156" text-anchor="middle" font-size="10" fill="#8B949E">streaming/job.py</text>
+  <text x="497" y="156" text-anchor="middle" font-size="10" fill="#8B949E">raw_job.py + speed_job.py</text>
 
   <!-- Parquet Store -->
   <rect x="415" y="180" width="165" height="50" rx="6" fill="#2D1A00" stroke="#D29922" stroke-width="1"/>

@@ -17,8 +17,8 @@ def _get_fs():
         secret=MINIO_SECRET_KEY,
     )
 
-def digest(path):
-    fs = _get_fs()
+def digest(path, fs=None):
+    fs = fs or _get_fs()
     value = hashlib.sha256()
     with fs.open(path, "rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -37,7 +37,7 @@ def build_manifest(batch_id, expected_rows):
         # Read metadata for rows
         with fs.open(path, "rb") as f:
             rows = pq.ParquetFile(f).metadata.num_rows
-        files.append({"path": relative, "sha256": digest(path), "rows": rows})
+        files.append({"path": relative, "sha256": digest(path, fs), "rows": rows})
         
     if sum(item["rows"] for item in files) != expected_rows:
         raise ValueError(f"Archive row count mismatch: {root}")
@@ -67,7 +67,7 @@ def verified_paths(batch_ids, report_date):
             if relative.parts[0] != f"dt={report_date}":
                 continue
             path = f"{root}/{relative.as_posix()}"
-            if not fs.exists(path) or digest(path) != item["sha256"]:
+            if not fs.exists(path) or digest(path, fs) != item["sha256"]:
                 raise ValueError(f"Missing or changed committed archive: {path}")
             output.append(f"s3a://{path}")
     return output

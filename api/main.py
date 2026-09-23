@@ -147,22 +147,25 @@ def fleet():
 
 
 @app.get("/metrics/zones")
-def zones():
-    return fetch_all("""WITH reference AS (SELECT max(event_ts) AS ts FROM rt_vehicle_state),
-        live AS (
-            SELECT zone, count(*) AS reporting_vehicles,
-                   count(*) FILTER (WHERE status <> 'idle') AS active_vehicles,
-                   count(*) FILTER (WHERE status = 'idle')::float / NULLIF(count(*),0) AS idle_ratio
-            FROM rt_vehicle_state, reference WHERE event_ts >= reference.ts - interval '30 minutes'
-            GROUP BY zone
-        ), trips AS (
-            SELECT zone, count(*) AS trips_last_hour, sum(fare_cents) AS earnings_cents
-            FROM completed_trips, reference WHERE completed_at >= reference.ts - interval '1 hour'
-            GROUP BY zone
-        ) SELECT COALESCE(live.zone,trips.zone) AS zone, live.reporting_vehicles,
-            live.active_vehicles, live.idle_ratio, COALESCE(trips.trips_last_hour,0) AS trips_last_hour,
-            COALESCE(trips.earnings_cents,0) AS earnings_cents
-        FROM live FULL OUTER JOIN trips ON live.zone=trips.zone ORDER BY zone""")
+def zones(window: int = Query(default=15, ge=1, le=1440)):
+    """Return Spark event-time window metrics over the requested simulated minutes."""
+    return fetch_all("""WITH reference AS (
+            SELECT max(window_start) AS ts FROM rt_zone_metrics
+        ), selected AS (
+            SELECT m.* FROM rt_zone_metrics m, reference
+            WHERE m.window_start > reference.ts - (%s * interval '1 minute')
+              AND m.window_start <= reference.ts
+        )
+        SELECT zone,
+            round(avg(active_vehicles))::integer AS active_vehicles,
+            round(avg(reporting_vehicles))::integer AS reporting_vehicles,
+            avg(idle_ratio)::float AS idle_ratio,
+            sum(trips)::bigint AS trips_last_hour,
+            sum(earnings_cents)::bigint AS earnings_cents,
+            min(window_start) AS window_start,
+            max(window_start) + interval '1 minute' AS window_end,
+            %s::integer AS window_minutes
+        FROM selected GROUP BY zone ORDER BY zone""", (window, window))
 
 
 @app.get("/metrics/time-of-day")
@@ -177,7 +180,8 @@ def time_of_day(report_date: date):
 def alerts(idle_minutes: int = Query(default=15, ge=1, le=1440)):
     return fetch_all("""SELECT vehicle_id, alert_type AS type, raised_at, payload AS details
         FROM rt_alerts WHERE resolved_at IS NULL
-        ORDER BY raised_at""")
+          AND COALESCE(rt_alerts.idle_minutes, 0) >= %s
+        ORDER BY raised_at""", (idle_minutes,))
 
 
 @app.get("/reports/daily")
