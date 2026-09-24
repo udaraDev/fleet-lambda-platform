@@ -11,7 +11,7 @@ from psycopg2.extras import Json, execute_values
 from common.db import connection, fetch_all
 from common.domain import SIM_START, validate_expenses
 from common.archive import verified_paths
-from common.publication import ALGORITHM_VERSION, export_matches
+from common.publication import ALGORITHM_VERSION, build_export_manifest, manifest_matches
 from common.logging_conf import log
 from common.settings import DATA_DIR, DQ_FAILURE_THRESHOLD, EVENT_INTERVAL_SECONDS, SIM_DAY_SECONDS, MAX_CHANGED_DATES_PER_RUN, vehicles
 
@@ -75,10 +75,10 @@ def _run_day(report_date, batches=None):
         "conflicts": conflicts,
     }, sort_keys=True).encode()).hexdigest()
     target = DATA_DIR / "reports" / f"profitability_{report_date}.json"
-    previous = fetch_all("SELECT input_fingerprint, export_status, output_sha256 FROM daily_report_status WHERE dt=%s", (report_date,))
+    previous = fetch_all("SELECT input_fingerprint,export_status,export_manifest FROM daily_report_status WHERE dt=%s", (report_date,))
     if (previous and previous[0]["input_fingerprint"] == fingerprint
             and previous[0]["export_status"] == "published"
-            and export_matches(target, previous[0]["output_sha256"])):
+            and manifest_matches(DATA_DIR / "reports", previous[0]["export_manifest"])):
         # A process can be interrupted after creating a run but before doing any
         # work.  run_day() closes that orphan as failed.  If the inputs and the
         # published artifact still match, the recovered run is no longer an
@@ -114,7 +114,12 @@ def _run_day(report_date, batches=None):
         if len(rejected) / len(rows) > DQ_FAILURE_THRESHOLD:
             raise ValueError(f"Data quality gate failed: {len(rejected)}/{len(rows)} invalid rows")
         from batch.spark_reconcile import aggregate
-        output, coverage, zone_agg = aggregate(paths, valid, report_date, vehicles())
+        blocked_event_ids = {row["event_id"] for row in conflicts
+                             if row.get("event_id") and not row["event_id"].startswith("prior:")}
+        blocked_trip_ids = {row["payload"].get("trip_id") for row in conflicts
+                            if row.get("payload", {}).get("trip_id")}
+        output, coverage, zone_agg = aggregate(
+            paths, valid, report_date, vehicles(), blocked_event_ids, blocked_trip_ids)
         conflicted_vehicles = {row["payload"].get("vehicle_id") for row in conflicts}
         for row in output:
             if row["vehicle_id"] in conflicted_vehicles:
@@ -139,7 +144,8 @@ def _run_day(report_date, batches=None):
                 VALUES (%s,%s,%s,%s,'pending',%s) ON CONFLICT(dt) DO UPDATE SET
                 run_id=EXCLUDED.run_id,input_fingerprint=EXCLUDED.input_fingerprint,
                 coverage=EXCLUDED.coverage,export_status='pending',updated_at=now(),
-                algorithm_version=EXCLUDED.algorithm_version,output_sha256=NULL""",
+                algorithm_version=EXCLUDED.algorithm_version,output_sha256=NULL,
+                export_manifest=NULL""",
                 (report_date, run_id, fingerprint, Json(coverage), ALGORITHM_VERSION))
         report_dir = DATA_DIR / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -185,11 +191,9 @@ def _run_day(report_date, batches=None):
         # Parquet format — columnar format for analytics tools and data lake ingestion
         parquet_target = report_dir / f"profitability_{report_date}.parquet"
         parquet_tmp = parquet_target.with_suffix(".tmp.parquet")
-        try:
-            import pyarrow as _pa
-            import pyarrow.parquet as _pq
-            if output:
-                schema = _pa.schema([
+        import pyarrow as _pa
+        import pyarrow.parquet as _pq
+        schema = _pa.schema([
                     _pa.field("dt", _pa.string()),
                     _pa.field("vehicle_id", _pa.string()),
                     _pa.field("trips", _pa.int32()),
@@ -202,16 +206,18 @@ def _run_day(report_date, batches=None):
                     _pa.field("reconciliation_status", _pa.string()),
                     _pa.field("run_id", _pa.string()),
                 ])
-                rows_with_meta = [{**r, "dt": report_date, "run_id": run_id} for r in output]
-                arrays = {f.name: [r.get(f.name) for r in rows_with_meta] for f in schema}
-                table = _pa.table({f.name: _pa.array(arrays[f.name], type=f.type) for f in schema})
-                _pq.write_table(table, str(parquet_tmp), compression="snappy")
-                parquet_tmp.replace(parquet_target)
-        except ImportError:
-            pass  # pyarrow not available in this environment — skip silently
+        rows_with_meta = [{**r, "dt": report_date, "run_id": run_id} for r in output]
+        arrays = {f.name: [r.get(f.name) for r in rows_with_meta] for f in schema}
+        table = _pa.table({f.name: _pa.array(arrays[f.name], type=f.type) for f in schema})
+        _pq.write_table(table, str(parquet_tmp), compression="snappy")
+        parquet_tmp.replace(parquet_target)
+        export_manifest = build_export_manifest(
+            [target, csv_target, html_target, parquet_target], report_dir)
         with connection() as conn, conn.cursor() as cur:
-            cur.execute("UPDATE daily_report_status SET export_status='published',output_sha256=%s,updated_at=now() WHERE dt=%s AND run_id=%s",
-                        (hashlib.sha256(payload).hexdigest(), report_date, run_id))
+            cur.execute("""UPDATE daily_report_status SET export_status='published',
+                output_sha256=%s,export_manifest=%s,updated_at=now()
+                WHERE dt=%s AND run_id=%s""",
+                (hashlib.sha256(payload).hexdigest(), Json(export_manifest), report_date, run_id))
             cur.execute("""UPDATE pipeline_runs SET status='success', rows_in=%s, rows_out=%s,
                            ended_at=now() WHERE run_id=%s""", (len(rows), len(output), run_id))
         log("batch", "report_published", run_id=run_id, report_date=report_date,
@@ -266,6 +272,16 @@ def run_available():
         raise ValueError("Failed report dates: " + ", ".join(failed))
 
 
-# ---------------------------------------------------------------------------
-# Stage-level helpers for the multi-stage Airflow DAG
-# (each callable maps to one task in daily_profitability_dag.py)
+def main():
+    parser = argparse.ArgumentParser(description="Run deterministic fleet reconciliation")
+    parser.add_argument("--date", help="one closed UTC date (YYYY-MM-DD); omit for catch-up")
+    args = parser.parse_args()
+    if args.date:
+        date.fromisoformat(args.date)
+        run_day(args.date)
+    else:
+        run_available()
+
+
+if __name__ == "__main__":
+    main()

@@ -8,7 +8,7 @@ Maintains its own checkpoint.
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
 from common.db import connection, clock_start
 from common.domain import SIM_START, simulated_time, validate_event
@@ -49,6 +49,37 @@ def source_identity(partitions):
     canonical = json.dumps(offsets, sort_keys=True, separators=(",", ":"))
     return offsets, hashlib.sha256(canonical.encode()).hexdigest()
 
+
+def continuity_errors(offsets, committed):
+    """Return partition discontinuities for a candidate raw source range."""
+    return {
+        int(partition): {"expected": int(committed[int(partition)]),
+                         "actual": int(details["start"])}
+        for partition, details in offsets["partitions"].items()
+        if int(partition) in committed
+        and int(details["start"]) != int(committed[int(partition)])
+    }
+
+
+def assert_offset_continuity(cur, offsets):
+    partitions = sorted(int(value) for value in offsets["partitions"])
+    cur.execute("""SELECT partition,next_offset FROM archive_partition_offsets
+        WHERE topic=%s AND partition=ANY(%s) FOR UPDATE""",
+        (offsets["topic"], partitions))
+    gaps = continuity_errors(offsets, dict(cur.fetchall()))
+    if gaps:
+        raise RuntimeError(f"Kafka archive offset discontinuity: {json.dumps(gaps, sort_keys=True)}")
+
+
+def advance_offsets(cur, offsets, archive_batch_id):
+    execute_values(cur, """INSERT INTO archive_partition_offsets
+        (topic,partition,next_offset,batch_id) VALUES %s
+        ON CONFLICT(topic,partition) DO UPDATE SET
+        next_offset=EXCLUDED.next_offset,batch_id=EXCLUDED.batch_id,updated_at=now()""", [
+            (offsets["topic"], int(partition), int(details["end"]), archive_batch_id)
+            for partition, details in offsets["partitions"].items()
+        ])
+
 def _process_batch(frame, batch_id):
     from pyspark.sql import functions as F
 
@@ -77,6 +108,7 @@ def _process_batch(frame, batch_id):
                 log("streaming-raw", "batch_already_committed", batch_id=committed[0],
                     source_batch_id=batch_id, rows_in=count)
                 return
+            assert_offset_continuity(cur, offsets)
             # The session advisory lock held by process_batch serialises this
             # allocation. Archive IDs never depend on restartable Spark IDs.
             cur.execute("SELECT COALESCE(max(batch_id),-1)+1 FROM pipeline_batches")
@@ -127,6 +159,7 @@ def _process_batch(frame, batch_id):
                 ON CONFLICT(batch_id) DO UPDATE SET
                 manifest_sha256=EXCLUDED.manifest_sha256,verified_at=now()""",
                 (archive_batch_id, manifest_fingerprint(manifest)))
+            advance_offsets(cur, offsets, archive_batch_id)
             
         log("streaming-raw", "batch_committed", batch_id=archive_batch_id,
             source_batch_id=batch_id, source_fingerprint=source_fingerprint,

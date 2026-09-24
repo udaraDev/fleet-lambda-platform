@@ -52,8 +52,9 @@ pipeline:
 
 minio:
   endpoint: "http://localhost:9000"
-  access_key: "minioadmin"
-  secret_key: "minioadmin"
+  # Credentials are generated into the ignored .env file.
+  access_key:
+  secret_key:
   bucket: "fleet-raw"
 
 serving:
@@ -64,7 +65,8 @@ serving:
   idle_alert_minutes: 5
 
 database:
-  url: "postgresql://fleet:fleet_dev@postgres:5432/fleet"
+  # Each service receives a role-specific URL from Docker Compose.
+  url:
 
 storage:
   data_dir: "/data"

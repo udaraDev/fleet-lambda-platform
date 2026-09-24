@@ -1,10 +1,10 @@
 {
   "review_date": "2026-09-24",
-  "unit_api_archive_tests": 54,
+  "unit_api_archive_tests": 59,
   "dependency_gated_host_skips": 1,
   "unittest_subtests": 17,
   "spark_python_parity": true,
-  "isolated_spark_postgresql_checks": 25,
+  "isolated_spark_postgresql_checks": 27,
   "clean_install": {
     "passed": true,
     "scope": "fresh named volumes on the same Docker host using built images; disposable volumes removed",
@@ -49,6 +49,16 @@
     "zone_window_parameter_applied": true,
     "alert_idle_threshold_applied": true,
     "metric_conflict_retraction_rollback_test": true
+  },
+  "hardening_verification": {
+    "raw_partition_offset_continuity": true,
+    "archive_restore_uses_raw_source_offsets": true,
+    "daily_conflicts_excluded_from_zone_totals": true,
+    "four_format_export_manifests": true,
+    "api_database_role_read_only": true,
+    "stream_and_batch_database_roles_verified": true,
+    "generated_local_secrets_required": true,
+    "minio_application_identity_bucket_scoped": true
   },
   "no_data_rule": {
     "passed": true,

@@ -124,20 +124,19 @@ def _check_archive_integrity(**ctx):
 def _check_export_integrity(**ctx):
     """Verify SHA-256 of all published daily report files."""
     from common.db import fetch_all
-    from common.publication import export_matches, ALGORITHM_VERSION
+    from common.publication import manifest_matches, ALGORITHM_VERSION
     from common.settings import DATA_DIR
     from common.logging_conf import log
 
     exports = fetch_all("""
-        SELECT dt, output_sha256, algorithm_version
+        SELECT dt, export_manifest, algorithm_version
         FROM daily_report_status
         WHERE export_status = 'published'
         ORDER BY dt DESC
     """)
     bad, old = [], []
     for r in exports:
-        path = DATA_DIR / "reports" / f"profitability_{r['dt']}.json"
-        if not export_matches(path, r["output_sha256"]):
+        if not manifest_matches(DATA_DIR / "reports", r["export_manifest"]):
             bad.append(str(r["dt"]))
         if r["algorithm_version"] != ALGORITHM_VERSION:
             old.append(str(r["dt"]))

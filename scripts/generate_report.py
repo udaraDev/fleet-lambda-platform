@@ -150,7 +150,7 @@ story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
 story += [p('3. Delivered architecture and data flow','H1X'), Architecture(),
  p('Figure 1. Delivered local Lambda architecture. Kafka feeds independent speed and raw consumers; PostgreSQL serves FastAPI and Prometheus is visualised in Grafana. The MinIO archive, database and checkpoints are operated as one dataset.' ,'Small'),
  p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. Per-event metric contributions allow the serving transaction to retract a discredited identity or trip and protect the corrected window from a later non-retracting Spark update. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
- p('<b>Storage contracts:</b> Raw MinIO Parquet is accepted only through committed row-count and SHA-256 manifests. PostgreSQL stores live state, trips, identities, conflicts, quarantine, run history and daily profit. Published JSON carries its run, algorithm version and quality coverage; PostgreSQL stores and rechecks its SHA-256.','Callout'), PageBreak()]
+ p('<b>Storage contracts:</b> Raw MinIO Parquet is accepted only through committed row-count and SHA-256 manifests. PostgreSQL stores live state, trips, identities, conflicts, quarantine, run history and daily profit. Every published JSON, CSV, HTML and Parquet representation is covered by one committed digest manifest.','Callout'), PageBreak()]
 
 story += [p('4. Technology selection','H1X'), table([
  ['Component','Why selected','Constraint / rejected alternative'],
@@ -168,7 +168,7 @@ story += [p('5. Implementation','H1X'), p('Streaming path','H2X')] + bullets([
  'Python emits telemetry for twelve vehicles; every fourth vehicle remains parked to create an interpretable idle/cost-only case.',
  'Both consumers use from_json plus native column constraints. Unknown vehicles, malformed JSON, impossible coordinates/speed, invalid types and out-of-bounds simulated timestamps are rejected.',
  'Kafka is capped at 2,000 offsets per trigger. Spark executors bulk-stage valid partitions and PostgreSQL performs a set-based transactional merge; raw event rows and aggregate windows are not collected on the Python driver.',
- 'Raw commits are identified by canonical Kafka partition/offset ranges, not restartable Spark batch numbers. Recreated checkpoints therefore cannot silently collide with an earlier ledger generation.',
+ 'Raw commits are identified by canonical Kafka partition/offset ranges, not restartable Spark batch numbers. Transactional per-partition high-water marks reject both gaps and overlaps, so recreated checkpoints cannot silently collide with an earlier ledger generation.',
  'Persistent event fingerprints deduplicate across batches. Same identity with different business content becomes a conflict; implicated trip revenue and live state are removed rather than arbitrarily selected.']) + [
  p('Batch path','H2X')] + bullets([
  'Only ledger-committed and checksum-verified Parquet enters reconciliation. Spark detects event/trip conflicts, aggregates completions by vehicle and calculates telemetry coverage.',
@@ -182,7 +182,7 @@ story += [p('6. Observability and failure behaviour','H1X'), table([
  ['Live/raw freshness','Accepted-event age plus live-to-archive event-time lag','HTTP 503 for stale ingestion or raw lag beyond 60 simulated minutes'],
  ['Batch failures','Latest run status per date and stalled-run threshold','HTTP 503; failed date retained with error'],
  ['Date completeness','Every expected date from simulation start to latest closed day','Missing historical hole makes report health degraded'],
- ['Publication','Pending state, algorithm version and JSON SHA-256','Missing/corrupt/outdated report makes health degraded and triggers restatement'],
+ ['Publication','Pending state, algorithm version and four-file SHA-256 manifest','Missing/corrupt/outdated report makes health degraded and triggers restatement'],
  ['Data quality','Quarantine rows and >5% daily gate','Bad date fails; last good daily result remains'],
  ['Tracing','trace_id in source/live trip records and structured logs','Supports event walkthrough; not full distributed tracing'],
  ['Business alert','Observed idle_since against simulated latest event','API lists considerably idle vehicles']], [31*mm,67*mm,67*mm],7.2),
@@ -196,11 +196,11 @@ story += [p('7. Results and business output','H1X'),
  p('Figure 2. Actual local results page showing healthy ingestion, the live fleet summary and the parameterised Spark event-time zone view. The selectable daily table continues below the captured viewport.','Small'),
  p('Verified snapshots','H2X'), table([
  ['Evidence','Observed result'],
- ['Automated unit/API/archive tests','54 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
- ['Isolated Spark/PostgreSQL suite','25 named checks passed; disposable schema and isolated MinIO prefix'],
+ ['Automated unit/API/archive tests','59 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
+ ['Isolated Spark/PostgreSQL suite','27 named checks passed; disposable schema and isolated MinIO prefix'],
  ['Fresh volumes','Sixteen-service Compose definition; DAG imports, report, live, MinIO and monitoring checks'],
  ['Short throughput smoke test','10/100/500 target eps: all 30/300/1,500 events accepted; p95 latency 8.48/6.03/6.15 s'],
- ['Final report-integrity health','Healthy; 751 dates; zero missing, invalid, outdated, failed, stalled or pending'],
+ ['Final report-integrity health','At evidence capture, all then-closed reports were valid; live health permits one current-date reconciliation in progress'],
  ['Final result quality snapshot','3,512 complete vehicle-days; 5,500 incomplete-telemetry vehicle-days']], [61*mm,104*mm]),
  p('The historical counts are a dated snapshot, not a performance benchmark. Incomplete days reflect real downtime in the persistent demonstration dataset. All retained dates were restated under algorithm version 4 so export digests and identity semantics were recalculated rather than inherited.','Callout'), PageBreak()]
 
@@ -209,13 +209,13 @@ story += [p('8. Verification and reproducibility','H1X'),
  table([['Area','Checks'],
  ['Replay/integrity','Cross-batch duplicate, offset identity, timestamp parity, conflicting fare, archive loss, writer fence'],
  ['Financial truth','Trip counts, zero-revenue parked vehicle, corrected cost, missing expense, incomplete telemetry, profit equation'],
- ['Publication','Pending state, simulated replace failure, retry, missing JSON recovery, corrupt JSON recovery, digest/run match'],
+ ['Publication','Pending state, simulated replace failure, retry, missing/corrupt four-format export recovery, digest/run match'],
  ['Validation','Malformed JSON, unknown vehicle, future timestamp and daily cost quality gate'],
  ['Concurrency','Same-date Airflow lock and consistent one-statement API read'],
  ['Operations','Compose schema, DAG imports, all endpoints, empty PostgreSQL/Kafka/archive/checkpoint volumes']], [38*mm,127*mm]),
  p('Fresh-install evidence','H2X'), p('An isolated Compose project used empty uniquely named volumes, alternate localhost ports and the already built images. It generated live data and a daily report, passed the read-only smoke test, showed no Airflow import errors, and was then stopped. Its disposable volumes were removed after machine-readable evidence was saved. This validates initialization on the same Docker host; it does not claim an uncached second-machine download test.'),
  p('Reproduction','H2X')] + bullets([
- 'Copy .env.example to .env only when no real .env exists, then run docker compose up --build -d.',
+ 'Run python -m scripts.bootstrap_env once to create random local secrets, then run docker compose up --build -d.',
  'Run python -m unittest discover -s tests -v and python -m scripts.verify_running --wait-seconds 480.',
  'Run the isolated reconciliation verification in the application image; it cleans only its UUID schema.',
  'Use scripts/verify_clean_install.py when its alternate ports are free; it records evidence, stops containers and removes only its uniquely named disposable volumes.']) + [PageBreak()]
@@ -227,12 +227,12 @@ story += [p('9. Limitations, scale and security','H1X'), table([
  ['Small immutable MinIO Parquet files','Iceberg/Delta compaction, lifecycle policies and replicated object storage'],
  ['One Airflow task','Stage-specific tasks/sensors after operational need is demonstrated'],
  ['Two-minute watermark is a classroom policy','Tune allowed lateness from measured production arrival distributions'],
- ['Local credentials, no API auth/TLS','Secrets manager, least-privilege roles, authentication, TLS and network policy'],
+ ['Generated local credentials; no API auth/TLS','Externally managed secrets, authentication, TLS and network policy'],
  ['Local Prometheus/Grafana; no routed notifications','Production SLOs, Alertmanager routes and on-call ownership'],
  ['Manual conflict resolution','Audited correction/rebuild workflow and lineage tooling'],
  ['Short 500 eps smoke test only','Long-duration saturation, resource profiling and realistic arrival distributions']], [58*mm,107*mm]),
  p('The project implements MinIO, separate consumers, formal windows, Grafana and durable alert history. It still treats them as local teaching infrastructure: correctness, architecture reasoning and reproducible evidence remain more important than naming production tools.'),
- p('Security scope','H2X'), p('Host ports bind to loopback and credentials are documented as local-demo only. Before external deployment, rotate secrets, give FastAPI a read-only database role, separate migration/write roles, authenticate endpoints, enable TLS and define retention/privacy controls for location traces.'),
+ p('Security scope','H2X'), p('Host ports bind to loopback. Each startup generates independent local secrets; FastAPI has a read-only database role, stream and batch writers have separate roles, and MinIO applications use a bucket-scoped identity. Before external deployment, move secrets to a manager, authenticate endpoints, enable TLS and define retention/privacy controls for location traces.'),
  p('Ethical interpretation','H2X'), p('Profitability is an operational vehicle measure, not a driver-performance score. Missing data and conflicts are shown as unknown to reduce harmful inference. A production system would require governance for location access, retention and human review of alerts.'), PageBreak()]
 
 story += [p('10. Conclusion and references','H1X'),

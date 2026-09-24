@@ -102,7 +102,7 @@ class ApiTests(unittest.TestCase):
         conn.__exit__ = MagicMock(return_value=False)
         return conn
 
-    @patch("api.main.export_matches", return_value=True)
+    @patch("api.main.manifest_matches", return_value=True)
     @patch("common.db.connection")
     def test_report_health_detects_failed_batch_with_fresh_report(self, mock_conn, mock_exp):
         from datetime import date
@@ -120,7 +120,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertFalse(response.json()["healthy"])
 
-    @patch("api.main.export_matches", return_value=True)
+    @patch("api.main.manifest_matches", return_value=True)
     @patch("common.db.connection")
     def test_report_health_accepts_published_current_report(self, mock_conn, mock_exp):
         from datetime import date
@@ -136,7 +136,7 @@ class ApiTests(unittest.TestCase):
         ])
         self.assertEqual(self.client.get("/health/reports").status_code, 200)
 
-    @patch("api.main.export_matches", return_value=True)
+    @patch("api.main.manifest_matches", return_value=True)
     @patch("common.db.connection")
     def test_report_health_allows_one_date_of_batch_catchup(self, mock_conn, mock_exp):
         from datetime import date
@@ -154,7 +154,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "processing")
 
-    @patch("api.main.export_matches", return_value=True)
+    @patch("api.main.manifest_matches", return_value=True)
     @patch("common.db.connection")
     def test_report_health_detects_live_raw_divergence(self, mock_conn, mock_exp):
         from datetime import date

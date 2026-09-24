@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from common.publication import export_matches
+from common.publication import build_export_manifest, export_matches, manifest_matches
 from common.domain import SIM_START
 from simulators.fixtures import make_event
 from streaming.sink import fingerprint
@@ -22,6 +22,19 @@ class CompletionTests(unittest.TestCase):
             path.write_bytes(b'corrupt')
             self.assertFalse(export_matches(path, expected))
             self.assertFalse(export_matches(path, None))
+
+    def test_report_manifest_covers_every_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = []
+            for suffix in ("json", "csv", "html", "parquet"):
+                path = root / f"profitability_2026-03-01.{suffix}"
+                path.write_bytes(suffix.encode())
+                paths.append(path)
+            manifest = build_export_manifest(paths, root)
+            self.assertTrue(manifest_matches(root, manifest))
+            paths[-1].write_bytes(b"corrupt")
+            self.assertFalse(manifest_matches(root, manifest))
 
     def test_timestamp_spellings_share_identity(self):
         item = make_event(1, 5, SIM_START, SIM_START)
@@ -47,7 +60,7 @@ class CompletionTests(unittest.TestCase):
         conn.__exit__ = MagicMock(return_value=False)
         return conn
 
-    @patch('api.main.export_matches', return_value=True)
+    @patch('api.main.manifest_matches', return_value=True)
     @patch('common.db.connection')
     def test_report_health_detects_historical_hole(self, mock_conn, mock_exp):
         from fastapi.testclient import TestClient
@@ -69,7 +82,7 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['missing_dates'], 1)
 
-    @patch('api.main.export_matches', return_value=False)
+    @patch('api.main.manifest_matches', return_value=False)
     @patch('common.db.connection')
     def test_report_health_detects_corrupt_export(self, mock_conn, mock_exp):
         from fastapi.testclient import TestClient
@@ -81,7 +94,7 @@ class CompletionTests(unittest.TestCase):
             {'expected_report': date(2026, 3, 1),
              'raw_event_ts': datetime(2026, 3, 2, tzinfo=timezone.utc),
              'live_event_ts': datetime(2026, 3, 2, tzinfo=timezone.utc)},
-            [{'dt': date(2026, 3, 1), 'output_sha256': 'bad', 'algorithm_version': ALGORITHM_VERSION}],
+            [{'dt': date(2026, 3, 1), 'export_manifest': {}, 'algorithm_version': ALGORITHM_VERSION}],
             {'n': 0},
             None,
         ])
@@ -168,6 +181,12 @@ class SparkPythonParityTests(unittest.TestCase):
                 spark_rows, _, zone_rows = spark_reconcile.aggregate(
                     [str(parquet_path)], expenses, day, known
                 )
+                blocked_trip = next(event["trip_id"] for event in events
+                                    if event["trip_completed"])
+                blocked_rows, _, blocked_zones = spark_reconcile.aggregate(
+                    [str(parquet_path)], expenses, day, known,
+                    blocked_trip_ids={blocked_trip}
+                )
             except ModuleNotFoundError as exc:
                 raise unittest.SkipTest("Parity test needs pyspark") from exc
             finally:
@@ -176,6 +195,9 @@ class SparkPythonParityTests(unittest.TestCase):
                     spark_reconcile._session = None
 
         self.assertTrue(zone_rows, "Spark batch must produce a non-empty zone summary")
+        self.assertEqual(sum(zone["trips"] for zone in blocked_zones.values()),
+                         sum(zone["trips"] for zone in zone_rows.values()) - 1)
+        self.assertEqual(blocked_rows[0]["reconciliation_status"], "conflicting_events")
 
         python_rows = reconcile(events, expenses, day)
         spark_by_v = {r["vehicle_id"]: r for r in spark_rows}

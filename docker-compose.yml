@@ -1,7 +1,6 @@
 name: fleet-lambda
 
 x-app-env: &app-env
-  DATABASE_URL: postgresql://fleet:${POSTGRES_PASSWORD:-fleet_dev}@postgres:5432/fleet
   KAFKA_BOOTSTRAP_SERVERS: kafka:9092
   DATA_DIR: /data
   SIM_DAY_SECONDS: ${SIM_DAY_SECONDS:-300}
@@ -13,8 +12,8 @@ x-app-env: &app-env
   MAX_CHANGED_DATES_PER_RUN: ${MAX_CHANGED_DATES_PER_RUN:-5}
   PROMETHEUS_URL: http://prometheus:9090
   MINIO_ENDPOINT: http://minio:9000
-  MINIO_ACCESS_KEY: minioadmin
-  MINIO_SECRET_KEY: minioadmin
+  MINIO_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?run python -m scripts.bootstrap_env}
+  MINIO_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?run python -m scripts.bootstrap_env}
 
 x-app: &app
   image: fleet-platform:dev
@@ -33,11 +32,12 @@ x-airflow: &airflow
       platform: service:api
   environment: &airflow-env
     <<: *app-env
+    DATABASE_URL: postgresql://fleet_batch:${FLEET_BATCH_PASSWORD:?generate .env}@postgres:5432/fleet
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://fleet:${POSTGRES_PASSWORD:-fleet_dev}@postgres:5432/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:${AIRFLOW_DB_PASSWORD:?generate .env}@postgres:5432/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__CORE__PARALLELISM: '2'
-    AIRFLOW__WEBSERVER__SECRET_KEY: local-fleet-demo-only
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?generate .env}
   volumes:
     - fleet-data:/data
     - airflow-logs:/opt/airflow/logs
@@ -48,7 +48,7 @@ services:
     image: postgres:16.8-bookworm
     environment:
       POSTGRES_USER: fleet
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fleet_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?generate .env}
       POSTGRES_DB: fleet
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -59,6 +59,21 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+
+  db-security-init:
+    image: fleet-platform:dev
+    build: .
+    restart: 'no'
+    environment:
+      DATABASE_ADMIN_URL: postgresql://fleet:${POSTGRES_PASSWORD:?generate .env}@postgres:5432/fleet
+      FLEET_API_PASSWORD: ${FLEET_API_PASSWORD:?generate .env}
+      FLEET_STREAM_PASSWORD: ${FLEET_STREAM_PASSWORD:?generate .env}
+      FLEET_BATCH_PASSWORD: ${FLEET_BATCH_PASSWORD:?generate .env}
+      AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD:?generate .env}
+    command: [python, -m, scripts.init_security]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   kafka:
     image: apache/kafka:3.9.1
@@ -115,8 +130,8 @@ services:
   minio:
     image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?generate .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?generate .env}
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
@@ -135,18 +150,33 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?generate .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?generate .env}
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?generate .env}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?generate .env}
+    volumes:
+      - ./docker/minio-app-policy.json:/config/minio-app-policy.json:ro
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD;
       /usr/bin/mc mb local/fleet-raw --ignore-existing;
+      /usr/bin/mc admin user add local $$MINIO_APP_ACCESS_KEY $$MINIO_APP_SECRET_KEY;
+      /usr/bin/mc admin policy create local fleet-app /config/minio-app-policy.json;
+      /usr/bin/mc admin policy attach local fleet-app --user $$MINIO_APP_ACCESS_KEY;
       "
 
   streaming-raw:
     <<: *app
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet_stream:${FLEET_STREAM_PASSWORD:?generate .env}@postgres:5432/fleet
     command: [spark-submit, --master, 'local[2]', --driver-memory, 1g, streaming/raw_job.py]
     depends_on:
       postgres:
         condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       data-init:
@@ -156,10 +186,15 @@ services:
 
   streaming-speed:
     <<: *app
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet_stream:${FLEET_STREAM_PASSWORD:?generate .env}@postgres:5432/fleet
     command: [spark-submit, --master, 'local[2]', --driver-memory, 1g, streaming/speed_job.py]
     depends_on:
       postgres:
         condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       data-init:
@@ -167,10 +202,15 @@ services:
 
   producer-stream:
     <<: *app
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet_stream:${FLEET_STREAM_PASSWORD:?generate .env}@postgres:5432/fleet
     command: [python, -m, simulators.producer_stream]
     depends_on:
       postgres:
         condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
       kafka-init:
         condition: service_completed_successfully
       data-init:
@@ -178,21 +218,31 @@ services:
 
   producer-batch:
     <<: *app
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet_batch:${FLEET_BATCH_PASSWORD:?generate .env}@postgres:5432/fleet
     command: [python, -m, simulators.producer_batch]
     depends_on:
       postgres:
         condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
       data-init:
         condition: service_completed_successfully
 
   api:
     <<: *app
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet_api:${FLEET_API_PASSWORD:?generate .env}@postgres:5432/fleet
     command: [uvicorn, api.main:app, --host, 0.0.0.0, --port, '8000']
     ports:
       - '127.0.0.1:${API_PORT:-8001}:8000'
     depends_on:
       postgres:
         condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -207,11 +257,13 @@ services:
       _AIRFLOW_DB_MIGRATE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
       _AIRFLOW_WWW_USER_USERNAME: admin
-      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-fleet_demo}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?generate .env}
     command: version
     depends_on:
       postgres:
         condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
       data-init:
         condition: service_completed_successfully
 
@@ -254,7 +306,7 @@ services:
     image: grafana/grafana:10.4.2
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-fleet_demo}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?generate .env}
       GF_USERS_ALLOW_SIGN_UP: 'false'
       GF_SERVER_ROOT_URL: http://localhost:${GRAFANA_PORT:-3000}
     volumes:
@@ -265,6 +317,34 @@ services:
     depends_on:
       - prometheus
     restart: unless-stopped
+
+  tools:
+    <<: *app
+    profiles: [tools]
+    restart: 'no'
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet_batch:${FLEET_BATCH_PASSWORD:?generate .env}@postgres:5432/fleet
+    command: [python, -c, "print('Use docker compose run --rm tools <command>')"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-security-init:
+        condition: service_completed_successfully
+      minio-mc:
+        condition: service_completed_successfully
+
+  migration:
+    <<: *app
+    profiles: [tools]
+    restart: 'no'
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://fleet:${POSTGRES_PASSWORD:?generate .env}@postgres:5432/fleet
+    command: [python, -m, scripts.migrate_integrity]
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   fleet-data:

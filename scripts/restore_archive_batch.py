@@ -10,28 +10,38 @@ from collections import defaultdict
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from kafka import KafkaConsumer, TopicPartition
 from psycopg2.extras import Json
 
 from common.archive import _get_fs, build_manifest, digest, manifest_fingerprint
 from common.db import connection, fetch_all
-from common.domain import parse_timestamp, validate_event
+from common.domain import SIM_START, parse_timestamp, validate_event
 from common.settings import DATA_DIR, KAFKA_BOOTSTRAP, MINIO_BUCKET, TOPIC
-from streaming.sink import fingerprint
+
+
+def source_ranges(batch):
+    """Return the exact raw Kafka ranges needed to rebuild one archive batch."""
+    offsets = batch.get("source_offsets") or {}
+    if offsets.get("version") != 1 or offsets.get("topic") != TOPIC or not offsets.get("partitions"):
+        raise ValueError("Batch has no restorable Kafka source-offset manifest")
+    if offsets.get("recovery"):
+        raise ValueError("Recovery batches require an exact retained archive copy")
+    ranges = {int(partition): {"start": int(item["start"]), "end": int(item["end"]),
+                               "rows": int(item["rows"])}
+              for partition, item in offsets["partitions"].items()}
+    if sum(item["rows"] for item in ranges.values()) != batch["rows_in"]:
+        raise ValueError("Kafka source-offset row count does not match the committed batch")
+    return ranges
 
 
 def restore(batch_id):
-    batch = fetch_all("""SELECT batch_id,rows_valid,max_event_ts,archive_manifest
+    from kafka import KafkaConsumer, TopicPartition
+
+    batch = fetch_all("""SELECT batch_id,rows_in,rows_valid,max_event_ts,
+        archive_manifest,source_offsets
         FROM pipeline_batches WHERE batch_id=%s""", (batch_id,))
     if not batch:
         raise ValueError(f"Unknown archive batch {batch_id}")
     batch = batch[0]
-    identities = {row["event_id"]: row["fingerprint"] for row in fetch_all(
-        "SELECT event_id,fingerprint FROM stream_event_keys WHERE batch_id=%s",
-        (batch_id,))}
-    if len(identities) != batch["rows_valid"]:
-        raise ValueError("Serving identity count does not match the committed archive row count")
-
     # Prefer an exact legacy copy when one exists. This restores the original
     # committed bytes and therefore does not rewrite immutable history.
     manifest = batch.get("archive_manifest") or {}
@@ -74,20 +84,26 @@ def restore(batch_id):
                           "source": "exact_legacy_copy", "corrupt_backup": backup}, indent=2))
         return
 
+    ranges = source_ranges(batch)
+
     consumer = KafkaConsumer(
         bootstrap_servers=KAFKA_BOOTSTRAP, enable_auto_commit=False,
         value_deserializer=lambda value: json.loads(value.decode("utf-8")),
     )
-    partitions = [TopicPartition(TOPIC, p) for p in consumer.partitions_for_topic(TOPIC)]
+    partitions = [TopicPartition(TOPIC, p) for p in sorted(ranges)]
     consumer.assign(partitions)
+    beginnings = consumer.beginning_offsets(partitions)
     ends = consumer.end_offsets(partitions)
     for tp in partitions:
-        consumer.seek_to_beginning(tp)
-    recovered = {}
+        requested = ranges[tp.partition]
+        if beginnings[tp] > requested["start"] or ends[tp] < requested["end"]:
+            raise ValueError(f"Kafka retention does not contain partition {tp.partition} "
+                             f"offsets [{requested['start']},{requested['end']})")
+        consumer.seek(tp, requested["start"])
+    recovered = []
     empty_deadline = time.monotonic() + 30
     try:
-        while len(recovered) < len(identities) and any(
-                consumer.position(tp) < ends[tp] for tp in partitions):
+        while any(consumer.position(tp) < ranges[tp.partition]["end"] for tp in partitions):
             polled = consumer.poll(timeout_ms=1000, max_records=5000)
             if not polled:
                 if time.monotonic() >= empty_deadline:
@@ -96,23 +112,22 @@ def restore(batch_id):
             empty_deadline = time.monotonic() + 30
             for tp, messages in polled.items():
                 for message in messages:
-                    if message.offset >= ends[tp]:
+                    if message.offset >= ranges[tp.partition]["end"]:
                         continue
-                    event_id = message.value.get("event_id")
-                    if event_id not in identities:
+                    try:
+                        event = validate_event(message.value)
+                        event_time = parse_timestamp(event["event_ts"])
+                    except (TypeError, ValueError, KeyError):
                         continue
-                    event = validate_event(message.value)
-                    if fingerprint(event) != identities[event_id]:
-                        raise ValueError(f"Kafka fingerprint mismatch for {event_id}")
-                    recovered[event_id] = event
+                    if SIM_START <= event_time <= batch["max_event_ts"]:
+                        recovered.append(event)
     finally:
         consumer.close()
-    missing = sorted(set(identities) - set(recovered))
-    if missing:
-        raise ValueError(f"Kafka retention is missing {len(missing)} batch events")
+    if len(recovered) != batch["rows_valid"]:
+        raise ValueError("Reconstructed valid-row count does not match the committed archive")
 
     by_date = defaultdict(list)
-    for event in recovered.values():
+    for event in recovered:
         item = dict(event)
         event_time = parse_timestamp(item["event_ts"])
         item["event_time"] = event_time
@@ -120,7 +135,7 @@ def restore(batch_id):
             "night" if event_time.hour < 6 else "morning" if event_time.hour < 12
             else "afternoon" if event_time.hour < 18 else "evening")
         by_date[event_time.date().isoformat()].append(item)
-    if max(parse_timestamp(e["event_ts"]) for e in recovered.values()) != batch["max_event_ts"]:
+    if max(parse_timestamp(e["event_ts"]) for e in recovered) != batch["max_event_ts"]:
         raise ValueError("Recovered maximum event time differs from the committed batch")
 
     fs = _get_fs()

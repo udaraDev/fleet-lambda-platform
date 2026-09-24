@@ -59,12 +59,12 @@ The first build downloads Kafka, Spark, Airflow, MinIO, PostgreSQL, Prometheus, 
 Run these commands from the repository root:
 
 ```powershell
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+python -m scripts.bootstrap_env
 docker compose up --build -d
 docker compose ps -a
 ```
 
-Do not replace an existing `.env`. Compose also works with the documented defaults when `.env` is absent.
+`bootstrap_env` creates a git-ignored `.env` with independent random database, MinIO, Airflow, and Grafana secrets. It refuses to overwrite an existing file. Compose intentionally fails when these secrets are absent; there are no predictable credential defaults.
 
 Initialization containers exit after creating databases, migrations, buckets, and Kafka topics. Their successful exit is expected. The API, Airflow, Kafka, MinIO, PostgreSQL, producers, Prometheus, Grafana, and two Spark consumers remain running.
 
@@ -88,12 +88,12 @@ Use these localhost endpoints after the containers start:
 - [Pipeline health](http://localhost:8001/health/pipeline)
 - [Report health](http://localhost:8001/health/reports)
 - [Prometheus metrics](http://localhost:8001/metrics)
-- [Airflow](http://localhost:8080), using `admin` and `fleet_demo`
-- [MinIO console](http://localhost:9001), using `minioadmin` and `minioadmin`
+- [Airflow](http://localhost:8080), using `AIRFLOW_ADMIN_USERNAME` and `AIRFLOW_ADMIN_PASSWORD` from `.env`
+- [MinIO console](http://localhost:9001), using `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` from `.env`
 - [Prometheus](http://localhost:9090)
-- [Grafana](http://localhost:3000), using `admin` and `fleet_demo`
+- [Grafana](http://localhost:3000), using `GF_SECURITY_ADMIN_USER` and `GF_SECURITY_ADMIN_PASSWORD` from `.env`
 
-The credentials support a localhost demonstration only. All published ports bind to `127.0.0.1`. Kafka and PostgreSQL are not exposed to the host.
+Keep `.env` private. All published ports bind to `127.0.0.1`; Kafka and PostgreSQL are not exposed to the host. Application services use separate PostgreSQL roles, and MinIO clients use a bucket-scoped service account rather than the root identity.
 
 ## Wait for the first daily report
 
@@ -127,21 +127,21 @@ py -3.11 -m venv .venv
 docker compose config --quiet
 ```
 
-The verified host result is 54 passed tests, 17 passed subtests, and one dependency-gated Spark parity skip.
+The verified host result is 59 passed tests, 17 passed subtests, and one dependency-gated Spark parity skip.
 
 Run the skipped parity test inside the application image, where PySpark is installed:
 
 ```powershell
-docker compose run --rm --no-deps api python -m unittest tests.test_completion.SparkPythonParityTests -v
+docker compose run --rm --no-deps tools python -m unittest tests.test_completion.SparkPythonParityTests -v
 ```
 
 Run the isolated PostgreSQL, Spark, Parquet, publication, and conflict suite with:
 
 ```powershell
-docker compose run --rm --no-deps api python -m scripts.verify_reconciliation
+docker compose run --rm tools python -m scripts.verify_reconciliation
 ```
 
-The script creates a UUID-named PostgreSQL schema and an isolated MinIO verification prefix. It removes both after the run and does not modify live serving tables or archives. The verified result contains 25 named checks.
+The script creates a UUID-named PostgreSQL schema and an isolated MinIO verification prefix. It removes both after the run and does not modify live serving tables or archives. The verified result contains 27 named checks.
 
 Validate the running platform with:
 
@@ -218,18 +218,19 @@ Keep the fleet size, simulation start, tick interval, and clock scale unchanged 
 
 ## Upgrade an existing dataset
 
-Fresh installations apply all six ordered fleet migrations automatically. Existing persistent volumes require the additive migration before upgraded writers start.
+Fresh installations apply all seven ordered fleet migrations automatically. Existing persistent volumes require the additive migration before upgraded writers start.
 
 Back up the database, then run:
 
 ```powershell
-docker compose build api airflow-scheduler
+python -m scripts.bootstrap_env
+docker compose build migration airflow-scheduler
 docker compose stop airflow-scheduler streaming-raw streaming-speed producer-stream
-docker compose run --rm --no-deps api python -m scripts.migrate_integrity
+docker compose run --rm migration python -m scripts.migrate_integrity
 docker compose up -d --no-deps streaming-raw streaming-speed producer-stream producer-batch api airflow-scheduler airflow-webserver
 ```
 
-The migration validates historical archive counts and creates baseline manifests and event identities. It fails when required evidence is missing instead of creating replacement data.
+The migration validates historical archive counts, creates baseline identities, backfills Kafka partition high-water marks, and upgrades legacy report exports to four-file digest manifests. It skips evidence already verified and fails when required source material is missing.
 
 ## Recover archive data cautiously
 
@@ -239,28 +240,28 @@ For a legacy batch with a retained local Parquet copy, run:
 
 ```powershell
 docker compose stop streaming-raw
-docker compose run --rm --no-deps api python -m scripts.restore_archive_batch 1234567890123
+docker compose run --rm --no-deps migration python -m scripts.restore_archive_batch 1234567890123
 docker compose start streaming-raw
 ```
 
-The restoration script prefers a byte-for-byte legacy copy whose digest matches the committed manifest. Its Kafka fallback is not approved for modern batches because raw archive IDs and speed-stream batch IDs use different namespaces.
+The restoration script prefers a byte-for-byte legacy copy whose digest matches the committed manifest. Its Kafka fallback reads the raw batch's committed topic/partition offset ranges, checks retention and row identity, and refuses non-exact recovery snapshots.
 
 For a detected live-to-raw event-time gap, run:
 
 ```powershell
 docker compose stop streaming-raw
-docker compose run --rm --no-deps api python -m scripts.repair_archive_gap --include-boundary
+docker compose run --rm --no-deps migration python -m scripts.repair_archive_gap --include-boundary
 docker compose start streaming-raw
 ```
 
-The gap repair snapshots retained Kafka offsets and checks serving identities before committing a recovery batch. Current raw commits do not yet enforce per-partition offset continuity, so compare source offset ranges before accepting a repair.
+The gap repair snapshots retained Kafka offsets and checks serving identities before committing a recovery batch. Normal raw commits transactionally reject both gaps and overlaps against per-topic, per-partition high-water marks.
 
 ## Run performance measurements
 
 Benchmark only a disposable dataset because benchmark events enter the immutable archive:
 
 ```powershell
-docker compose exec -T api python -m scripts.benchmark --eps 100 --duration 10 --disposable-dataset
+docker compose run --rm --no-deps tools python -m scripts.benchmark --eps 100 --duration 10 --disposable-dataset
 ```
 
 The saved 10, 100, and 500 events-per-second smoke results are in `output/evidence/performance-benchmark.json`. Every published event was accepted in those short runs. The measurements include the five-second streaming trigger and do not represent sustained capacity.
@@ -270,18 +271,9 @@ The saved 10, 100, and 500 events-per-second smoke results are in `output/eviden
 The repository intentionally defers production infrastructure:
 
 - Single Kafka broker, local Spark workers, single-node MinIO, and one PostgreSQL instance
-- Local credentials, no Transport Layer Security (TLS), no API authentication, and no external alert routing
-- Shared PostgreSQL owner credentials across application services
-- MinIO root credentials used by application services
-- Fixed local Airflow signing key and predictable demonstration password
+- Generated local credentials, but no Transport Layer Security (TLS), API authentication, secret manager, or external alert routing
+- Database and object-store permissions are service-scoped, but all services still run on one Docker host
 - No schema registry, distributed tracing backend, replicated storage, or disaster-recovery automation
-
-The following correctness limitations remain visible and documented:
-
-- Modern Kafka-based archive restoration needs source-offset reconstruction instead of speed-stream batch identities
-- Raw commits record Kafka ranges but do not yet reject an internal per-partition offset discontinuity
-- A conflict known only through the database ledger can invalidate vehicle profit without retracting the corresponding daily zone aggregate
-- SHA-256 publication health protects JSON reports; CSV, HTML, and Parquet exports do not have independent stored digests
 
 The platform does not claim end-to-end exactly-once delivery. Kafka checkpoints, persistent identities, database transactions, archive manifests, and deterministic restatement provide replay safety within the documented single-writer dataset contract.
 

@@ -32,7 +32,7 @@ _db = _cfg.get("database", {})
 _sto = _cfg.get("storage", {})
 
 DATA_DIR = Path(os.getenv("DATA_DIR", _sto.get("data_dir", "/data")))
-DATABASE_URL = os.getenv("DATABASE_URL", _db.get("url", "postgresql://fleet:fleet_dev@postgres:5432/fleet"))
+DATABASE_URL = os.getenv("DATABASE_URL", _db.get("url"))
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", _kfk.get("bootstrap_servers", "kafka:9092"))
 TOPIC = os.getenv("KAFKA_TOPIC", _kfk.get("topic", "trip-events"))
 DEAD_LETTER_TOPIC = os.getenv("KAFKA_DEAD_LETTER_TOPIC", _kfk.get("dead_letter_topic", "trip-events-dead-letter"))
@@ -48,8 +48,8 @@ IDLE_ALERT_MINUTES = int(os.getenv("IDLE_ALERT_MINUTES", _srv.get("idle_alert_mi
 
 _minio = _cfg.get("minio", {})
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", _minio.get("endpoint", "http://localhost:9000"))
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", _minio.get("access_key", "minioadmin"))
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", _minio.get("secret_key", "minioadmin"))
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", _minio.get("access_key"))
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", _minio.get("secret_key"))
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", _minio.get("bucket", "fleet-raw"))
 
 if (SIM_DAY_SECONDS <= 0 or EVENT_INTERVAL_SECONDS <= 0 or VEHICLE_COUNT <= 0

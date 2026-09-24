@@ -28,11 +28,11 @@ class IntegrityTests(unittest.TestCase):
             conn.__enter__.return_value = conn
             conn.cursor.return_value.__enter__.return_value = cur
             with patch.object(batch, "DATA_DIR", root), \
-                    patch.object(batch, "export_matches", return_value=True), \
+                    patch.object(batch, "manifest_matches", return_value=True), \
                     patch.object(batch.hashlib, "sha256") as digest_mock, \
                     patch.object(batch, "fetch_all", side_effect=[[], [{
                         "input_fingerprint": "same", "export_status": "published",
-                        "output_sha256": "hash"}]]), \
+                        "export_manifest": {"version": 1, "files": {}}}]]), \
                     patch.object(batch, "connection", return_value=conn):
                 digest_mock.return_value.hexdigest.return_value = "same"
                 result = batch._run_day("2026-03-01", [{

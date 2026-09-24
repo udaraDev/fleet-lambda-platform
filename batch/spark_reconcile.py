@@ -32,7 +32,10 @@ def session():
     return _session
 
 
-def aggregate(paths, expenses, report_date, known_vehicles):
+def aggregate(paths, expenses, report_date, known_vehicles,
+              blocked_event_ids=None, blocked_trip_ids=None):
+    blocked_event_ids = set(blocked_event_ids or ())
+    blocked_trip_ids = set(blocked_trip_ids or ())
     if not paths:
         # No input to distribute: return explicit unknowns, never invented zero-profit facts.
         costs = {c["vehicle_id"]: c for c in expenses}
@@ -69,15 +72,23 @@ def aggregate(paths, expenses, report_date, known_vehicles):
         fields = [F.col("event_time").alias("event_ts") if c == "event_ts" else F.col(c)
                   for c in EVENT_FIELDS]
         signatures = raw.withColumn("signature", F.to_json(F.struct(*fields)))
-        bad_ids = signatures.groupBy("event_id").agg(F.countDistinct("signature").alias("n")).filter("n > 1")
+        bad_ids = signatures.groupBy("event_id").agg(F.countDistinct("signature").alias("n")).filter("n > 1").select("event_id")
+        if blocked_event_ids:
+            external_ids = spark.createDataFrame([(value,) for value in sorted(blocked_event_ids)],
+                                                 "event_id string")
+            bad_ids = bad_ids.union(external_ids).distinct()
         event_conflicts = raw.join(bad_ids, "event_id").select("vehicle_id").distinct()
-        clean = raw.join(bad_ids.select("event_id"), "event_id", "left_anti").dropDuplicates(["event_id"])
+        clean = raw.join(bad_ids, "event_id", "left_anti").dropDuplicates(["event_id"])
         completed = clean.filter(F.col("trip_completed"))
         bad_trips = completed.groupBy("trip_id").agg(F.countDistinct(F.struct(
-            "vehicle_id", "fare_cents", "event_time", "zone")).alias("n")).filter("n > 1")
+            "vehicle_id", "fare_cents", "event_time", "zone")).alias("n")).filter("n > 1").select("trip_id")
+        if blocked_trip_ids:
+            external_trips = spark.createDataFrame([(value,) for value in sorted(blocked_trip_ids)],
+                                                   "trip_id string")
+            bad_trips = bad_trips.union(external_trips).distinct()
         conflicts = event_conflicts.union(completed.join(bad_trips, "trip_id").select("vehicle_id")).distinct()
         conflicted = {r.vehicle_id for r in conflicts.collect()}
-        trips = completed.join(bad_trips.select("trip_id"), "trip_id", "left_anti").dropDuplicates(["trip_id"])
+        trips = completed.join(bad_trips, "trip_id", "left_anti").dropDuplicates(["trip_id"])
         totals = trips.groupBy("vehicle_id").agg(F.count("*").alias("trips"), F.sum("fare_cents").alias("revenue_cents"))
         ordered = clean.select("vehicle_id", "event_time", "zone").distinct().withColumn(
             "previous", F.lag("event_time").over(Window.partitionBy("vehicle_id").orderBy("event_time")))

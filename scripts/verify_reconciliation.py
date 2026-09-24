@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import tempfile
+import time
 import uuid
 from datetime import timedelta
 from contextlib import contextmanager
@@ -30,7 +31,14 @@ def verify():
 
     @contextmanager
     def connection():
-        conn = psycopg2.connect(DATABASE_URL, connect_timeout=5, options="-c timezone=UTC")
+        for attempt in range(3):
+            try:
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=5, options="-c timezone=UTC")
+                break
+            except psycopg2.OperationalError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
         try:
             with conn:
                 with conn.cursor() as cur:
@@ -56,6 +64,7 @@ def verify():
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "004_plan_tables.sql").read_text(encoding="utf-8-sig"))
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "005_retractable_metrics.sql").read_text(encoding="utf-8-sig"))
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "006_archive_offsets.sql").read_text(encoding="utf-8-sig"))
+            cur.execute((Path(__file__).resolve().parents[1] / "sql" / "007_hardening.sql").read_text(encoding="utf-8-sig"))
         from streaming.sink import bulk_serve
         first = dict(make_event(1, 5, SIM_START + timedelta(days=3), SIM_START), time_of_day_bucket="night")
         with connection() as conn, conn.cursor() as cur:
@@ -192,6 +201,10 @@ def verify():
                 target.unlink()
                 assert batch.run_day(day) is True, "Missing published export was not repaired"
                 assert target.is_file()
+                parquet_export = root / "reports" / f"profitability_{day}.parquet"
+                parquet_export.write_bytes(b"corrupt")
+                assert batch.run_day(day) is True, "Corrupted Parquet export was not repaired"
+                assert pq.ParquetFile(parquet_export).metadata.num_rows == 4
                 equivalent = [dict(e, event_ts=e['event_ts'].replace('+00:00', 'Z')) for e in events]
                 parity_path = root / 'timezone-parity.parquet'
                 pq.write_table(pa.Table.from_pylist(events + equivalent), parity_path)
@@ -313,7 +326,7 @@ def verify():
                 "registered vehicle visibility", "unknown missing cost", "concurrent-run lock", "missing archive safety",
                 "bulk cross-batch replay", "conflict recovery", "missing telemetry", "native raw-stream validation",
                 "raw offset identity", "staged serving merge", "raw commit idempotency", "partial-day gap", "Spark conflict detection", "export failure recovery",
-                "missing export recovery", "corrupt export recovery", "timestamp identity parity", "conflicted state removal"
+                "missing export recovery", "all-format export integrity", "corrupt export recovery", "timestamp identity parity", "conflicted state removal"
             ]}, indent=2))
     finally:
         try:

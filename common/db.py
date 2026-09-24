@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import time
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -8,7 +9,18 @@ from common.settings import DATABASE_URL, SIM_DAY_SECONDS
 
 @contextmanager
 def connection():
-    conn = psycopg2.connect(DATABASE_URL, connect_timeout=5, options='-c timezone=UTC')
+    error = None
+    for attempt in range(3):
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5, options='-c timezone=UTC')
+            break
+        except psycopg2.OperationalError as exc:
+            error = exc
+            if attempt == 2:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+    else:  # defensive: the loop either breaks or raises
+        raise error
     try:
         with conn:
             yield conn

@@ -9,7 +9,7 @@ from common.db import fetch_all
 from common.logging_conf import log
 from common.settings import NO_DATA_SECONDS, RAW_ARCHIVE_LAG_MINUTES, VEHICLE_COUNT
 from common.settings import DATA_DIR
-from common.publication import ALGORITHM_VERSION, export_matches
+from common.publication import ALGORITHM_VERSION, manifest_matches
 
 app = FastAPI(title="Fleet Lambda Platform", version="0.1.0")
 
@@ -109,7 +109,7 @@ def health_reports():
                     raw_lag_seconds = max(0.0, (
                         layer_times["live_event_ts"] - layer_times["raw_event_ts"]
                     ).total_seconds())
-                cur.execute("SELECT dt,output_sha256,algorithm_version FROM daily_report_status WHERE export_status='published'")
+                cur.execute("SELECT dt,export_manifest,algorithm_version FROM daily_report_status WHERE export_status='published'")
                 exports = [dict(r) for r in cur.fetchall()]
                 cur.execute("""SELECT count(*) AS n FROM generate_series(date '2026-03-01',
                     %s::date,interval '1 day') AS d(dt) LEFT JOIN daily_report_status s ON s.dt=d.dt
@@ -123,10 +123,8 @@ def health_reports():
                     LIMIT 1""", (expected,))
                 active_run = cur.fetchone() is not None
         # File-system checks are outside the DB snapshot (no DB interaction).
-        bad_exports = sum(
-            not export_matches(DATA_DIR / 'reports' / ('profitability_' + str(r['dt']) + '.json'),
-                               r['output_sha256'])
-            for r in exports)
+        bad_exports = sum(not manifest_matches(DATA_DIR / "reports", r["export_manifest"])
+                          for r in exports)
         old_versions = sum(r['algorithm_version'] != ALGORITHM_VERSION for r in exports)
         healthy = (not summary["failed_dates"] and not summary["stalled_dates"] and
                    not publication["pending_exports"] and not bad_exports and not old_versions
