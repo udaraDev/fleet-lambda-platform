@@ -11,7 +11,7 @@ The delivered system includes:
 - **Streaming ingestion**: a Python producer sends telemetry for 12 vehicles to a three-partition Apache Kafka topic
 - **Speed layer**: Spark Structured Streaming validates events, applies a two-minute watermark, updates live vehicle state, raises idle alerts, and writes one-minute zone windows
 - **Raw layer**: an independent Spark consumer writes partitioned Parquet to MinIO and commits row-count and SHA-256 manifests
-- **Daily source**: a Python producer uploads one expense CSV per five-minute simulated day
+- **Daily source**: a Python producer writes one expense CSV to the shared landing directory per five-minute simulated day
 - **Batch layer**: Apache Airflow invokes PySpark reconciliation over verified raw archives and the latest valid expense file
 - **Serving layer**: PostgreSQL stores live state, window metrics, alerts, daily profitability, publication metadata, quarantine rows, and run history
 - **Output layer**: FastAPI serves a business page and query endpoints; reconciliation publishes JSON, CSV, HTML, and Parquet reports
@@ -123,7 +123,7 @@ Run the host suite first:
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python -m pytest tests -q -rs
+.\.venv\Scripts\python -m unittest discover -s tests -q
 docker compose config --quiet
 ```
 
@@ -287,7 +287,7 @@ Use these files for assessment and presentation:
 - [Final delivered scope](docs/FINAL_SCOPE.md)
 - [Demo runbook](docs/DEMO_RUNBOOK.md)
 - [Viva questions and answers](docs/VIVA_QA.md)
-- [Individual contribution statement](docs/CONTRIBUTION_STATEMENT.md)
+- [Team contribution statement](docs/CONTRIBUTION_STATEMENT.md)
 - [Architecture decision records](docs/adr/)
 - [Clean-install evidence](output/evidence/clean-install.json)
 - [Final verification evidence](output/evidence/final-verification.json)
@@ -303,6 +303,12 @@ docker compose down
 
 Deleting named volumes permanently removes the demonstration dataset. Do not add `--volumes` unless you intend to rebuild from empty storage.
 
-## Author
+## Team contributions
 
-Udara Subodhitha Senevirathna, BSc Computer Engineering, University of Ruhuna
+This is a three-member BSc Computer Engineering project at the University of Ruhuna. The members contributed through distinct, equally weighted work areas:
+
+- **Threemavithana T.M. (EG/2021/4835):** Platform and ingestion, including containerized deployment, event simulation, Kafka ingestion, the MinIO raw archive, and monitoring.
+- **Senevirathne P.U.S (EG/2021/4805):** Stream processing and serving, including event contracts, Spark speed processing and window metrics, PostgreSQL serving, and FastAPI.
+- **Kodikara A.W. (EG/2021/4613):** Batch processing and data quality, including Airflow workflows, Spark reconciliation and profitability, quarantine checks, and daily reports.
+
+All three share responsibility for the overall architecture, integration, testing, documentation, final report, and live demonstration. Each member should be able to explain the complete system. See the [team contribution statement](docs/CONTRIBUTION_STATEMENT.md) for the submission wording.

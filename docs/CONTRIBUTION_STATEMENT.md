@@ -1,14 +1,16 @@
-# Individual contribution statement
+# Team contribution statement
 
-This repository is presented as an individual project by **Udara Subodhitha
-Senevirathna**, BSc Computer Engineering, University of Ruhuna.
+This EC8203 mini-project is submitted by three BSc Computer Engineering students
+at the University of Ruhuna:
 
-The author designed the Lambda architecture; implemented the Kafka producers,
-independent Spark raw and speed consumers, MinIO archive, Spark reconciliation,
-Airflow workflows, PostgreSQL serving model, FastAPI application, Prometheus and
-Grafana configuration; wrote the automated checks and documentation; and prepared
-the report and demonstration material.
+| Member | Registration number | Individual contribution |
+| --- | --- | --- |
+| Threemavithana T.M. | EG/2021/4835 | Platform and ingestion: containerized deployment, event simulation, Kafka ingestion, MinIO raw archive, and monitoring dashboards and alerts. |
+| Senevirathne P.U.S | EG/2021/4805 | Stream processing and serving: shared event contracts, Spark speed layer and window metrics, PostgreSQL serving model, and FastAPI endpoints. |
+| Kodikara A.W. | EG/2021/4613 | Batch processing and data quality: Airflow workflows, Spark reconciliation and profitability, quarantine checks, and daily report generation. |
 
-No contribution from an unlisted group member is claimed. If this work is submitted
-as a group project, this statement must be replaced with the actual member names and
-an agreed, truthful division of work before submission.
+These are distinct, equally weighted areas of work, not different levels of
+contribution. All three members share responsibility for the overall architecture,
+integration, testing, documentation, final report, and live demonstration. Each
+member should be able to explain and defend the complete system, not just their
+individual area.

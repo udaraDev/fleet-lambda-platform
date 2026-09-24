@@ -114,8 +114,12 @@ story = []
 story += [Spacer(1,35*mm), p('FLEET LAMBDA PLATFORM','TitleX'),
           p('Real-time ride-hailing operations and daily profitability reconciliation','SubTitle'),
           Spacer(1,18*mm), p('<b>EC8203 Applied Big Data Engineering Mini-Project</b>','SubTitle'),
-          Spacer(1,22*mm), table([['Author','Programme'],['Udara Subodhitha Senevirathna','BSc Computer Engineering'],
-          ['Institution','University of Ruhuna'],['Report date','24 September 2026']], [65*mm,80*mm],8.5),
+          Spacer(1,22*mm), table([['Project team','Registration number'],
+          ['Threemavithana T.M.','EG/2021/4835'],
+          ['Senevirathne P.U.S','EG/2021/4805'],
+          ['Kodikara A.W.','EG/2021/4613'],
+          ['Programme','BSc Computer Engineering'],
+          ['Institution','University of Ruhuna'],['Report date','24 September 2026']], [75*mm,80*mm],8.5),
           Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation and measured checks. It distinguishes local classroom evidence from production claims and does not claim a recorded demo video or production-scale capacity.','Callout'),
           PageBreak()]
 
@@ -250,16 +254,20 @@ story += [p('10. Conclusion and references','H1X'),
  ['This PDF','Architecture decision, design, evidence, limitations and references'],
  ['docs/DEMO_RUNBOOK.md','Prepared approximately eight-minute live demonstration'],
  ['docs/VIVA_QA.md','Ten likely viva questions with honest prepared answers'],
- ['docs/CONTRIBUTION_STATEMENT.md','Individual authorship and contribution statement'],
+ ['docs/CONTRIBUTION_STATEMENT.md','Team membership and individual work statement'],
  ['docs/FINAL_SCOPE.md','Authoritative delivered scope and deferrals'],
  ['output/evidence/clean-install.json','Machine-readable fresh-volume verification evidence'],
  ['output/evidence/performance-benchmark.json','10/100/500 eps latency and acceptance evidence']], [65*mm,100*mm]),
- p('Contribution note. The README identifies one author. No additional group-member contributions are invented. If submitted as group work, the students must add a truthful statement based on actual contributions.','Callout')]
+ p('Individual contributions','H2X'), table([['Member','Individual work area'],
+ ['Threemavithana T.M.','Platform, Kafka/MinIO ingestion and monitoring'],
+ ['Senevirathne P.U.S','Spark streaming, PostgreSQL serving and API'],
+ ['Kodikara A.W.','Airflow/Spark batch, data quality and reports']], [61*mm,104*mm]),
+ p('The three work areas are equally weighted. All members share responsibility for architecture, integration, testing, documentation, the final report and demo, and can explain the complete system.','Callout')]
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 doc = SimpleDocTemplate(str(OUT), pagesize=A4, rightMargin=20*mm, leftMargin=20*mm,
                         topMargin=20*mm, bottomMargin=22*mm,
                         title='Fleet Lambda Platform - EC8203 Mini-Project',
-                        author='Udara Subodhitha Senevirathna')
+                        author='Threemavithana T.M.; Senevirathne P.U.S; Kodikara A.W.')
 doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
 print(OUT)

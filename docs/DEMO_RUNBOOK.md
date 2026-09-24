@@ -63,5 +63,6 @@ dashboard and Airflow's administration UI.
 - Read the PDF and verify author/course details before submission.
 - Rehearse the live demo; students must personally defend their implementation.
 - Submit the PDF and generated source ZIP (or an equivalent complete Git repository).
-- If a group, add truthful contributions; if a recording is required locally, record
-  this walkthrough. A video file has not been fabricated or claimed as recorded.
+- Confirm the three names, student numbers, and contribution statement before
+  presenting. If a recording is required locally, record this walkthrough. A
+  video file has not been fabricated or claimed as recorded.

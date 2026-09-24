@@ -95,5 +95,6 @@ their replay/state infrastructure reliably. Lambda is not universally superior.
 
 The submission uses a prepared live demo.
 The demo runbook contains timings, commands, expected outcomes and viva questions.
-Author identity follows the existing README. If this is a group submission, the
-actual member contributions must be supplied by the students; none are invented.
+The project is submitted by the three members named in the README. Their distinct,
+equally weighted contributions and shared overall responsibility are recorded in
+`CONTRIBUTION_STATEMENT.md`.

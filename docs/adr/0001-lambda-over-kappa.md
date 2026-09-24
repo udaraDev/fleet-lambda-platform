@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-01  
 **Status:** Accepted  
-**Deciders:** Udara Subodhitha Senevirathna  
+**Deciders:** Project team (Threemavithana T.M.; Senevirathne P.U.S; Kodikara A.W.)
 
 ---
 

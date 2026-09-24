@@ -255,23 +255,28 @@ fleet-lambda-platform/
 
 ## 7. Team Structure & Responsibilities
 
-The work is split **by pipeline layer**, so each member owns a complete, demonstrable part of the system and can defend it in the viva. Replace *Member A/B/C* with names.
+**Actual contribution:** Threemavithana T.M. (EG/2021/4835), Senevirathne
+P.U.S (EG/2021/4805), and Kodikara A.W. (EG/2021/4613) led distinct,
+equally weighted work areas shown below. All three share responsibility for the
+overall architecture, integration, testing, documentation, report, and demo.
+See `docs/CONTRIBUTION_STATEMENT.md` for the submission statement. The detailed
+two-week timetable is a plan, not a claim that every task happened on that day.
 
-| Member | Role | Owns (code) | Rubric areas led |
+| Member | Work area | Relevant code areas | Rubric areas |
 |--------|------|-------------|------------------|
-| **Member A** | Platform & Ingestion Engineer | `docker-compose.yml`, `.env.example`, `Makefile`, `config/`, `simulators/`, `streaming/raw_sink_job.py`, `observability/`, `common/logging_conf.py`, `common/metrics.py` | Data Ingestion (15), Observability (10), Code Quality & Reproducibility (5) |
-| **Member B** | Stream Processing & Serving Engineer | `common/schemas.py`, `common/transforms.py`, `streaming/speed_layer_job.py`, `sql/`, `common/db.py`, `api/` | Processing: speed layer (15, shared), Storage & Serving (10) |
-| **Member C** | Batch Processing & Data Quality Engineer | `batch/`, `airflow/dags/`, data quality rules, `dq_quarantine`, daily report rendering | Processing: batch layer (15, shared), Report compilation (15) |
+| **Threemavithana T.M. (EG/2021/4835; A)** | Platform & Ingestion | `docker-compose.yml`, `.env.example`, `Makefile`, `config/`, `simulators/`, `streaming/raw_job.py`, `observability/` | Data Ingestion (15), Observability (10), Code Quality & Reproducibility (5) |
+| **Senevirathne P.U.S (EG/2021/4805; B)** | Stream Processing & Serving | `common/`, `streaming/speed_job.py`, `sql/`, `api/` | Processing: speed layer (15), Storage & Serving (10) |
+| **Kodikara A.W. (EG/2021/4613; C)** | Batch Processing & Data Quality | `batch/`, `airflow/dags/`, data quality rules, quarantine, daily report rendering | Processing: batch layer (15), data quality and reports |
 
-### Shared responsibilities (all members)
+### Originally planned shared responsibilities
 
 - **Architecture decision (20 marks):** Lambda vs Kappa argument agreed in a joint session on Day 1; each member contributes the justification for their own layer.
 - **Tech stack justification (10 marks):** each member writes the rows for the tools they own.
 - **Tests:** each member writes unit tests for their own modules.
-- **Demo video:** each member presents their own layer (about 2-3 minutes each).
+- **Demo (planned):** each member presents part of the system (about 2-3 minutes each).
 - **Viva readiness:** each member reviews at least one other member's pull request, so every line is understood by two people.
 
-### Report section ownership
+### Originally planned report section allocation
 
 | Report section | Lead | Support |
 |----------------|------|---------|
@@ -287,7 +292,10 @@ The work is split **by pipeline layer**, so each member owns a complete, demonst
 | 9 Limitations & production scale | All | C edits |
 | Final compilation, formatting, PDF | C | - |
 
-### Integration contracts (agreed on Day 2, before parallel work starts)
+This table preserves the original writing plan only. The final report and
+submission are shared responsibilities of all three members.
+
+### Originally planned integration contracts
 
 These interfaces let the three tracks work independently without blocking each other:
 
@@ -301,7 +309,7 @@ These interfaces let the three tracks work independently without blocking each o
 
 Until a dependency is ready, each member works against **sample fixtures** (a small JSON event file, a sample Parquet partition, a sample CSV) committed to `tests/fixtures/`.
 
-### Collaboration workflow
+### Originally planned collaboration workflow
 
 - **Branches:** `main` is always runnable; each member works on `feature/<area>-<short-name>` branches.
 - **Pull requests:** every merge into `main` needs one review from another member.
@@ -309,19 +317,28 @@ Until a dependency is ready, each member works against **sample fixtures** (a sm
 - **Task board:** GitHub Projects board with one card per deliverable in §8, assigned to its owner.
 - **Contribution evidence:** commits and PRs are the record used for the contribution statement.
 
-### Individual contribution statement (submission template)
+### Individual contribution statement
 
-> **Member A (Platform & Ingestion):** Designed and built the Docker Compose environment, streaming and batch data simulators with fault injection, the Kafka topic design, the raw Parquet sink, and the observability stack (structured logging, Prometheus metrics, Grafana dashboards and alert rules). Wrote the report sections on diagrams, ingestion and observability.
+Member A is Threemavithana T.M., Member B is Senevirathne P.U.S, and Member C
+is Kodikara A.W. Their different work areas carry equal responsibility for
+the project outcome. The concise submission statement is in
+`docs/CONTRIBUTION_STATEMENT.md`.
+
+> **Threemavithana T.M.:** Platform, event simulation, Kafka/MinIO ingestion,
+> deployment, and monitoring.
 >
-> **Member B (Stream Processing & Serving):** Designed the shared event schemas and transformation library, implemented the Spark Structured Streaming speed layer (windowing, watermarking, deduplication, idle detection), the PostgreSQL serving schema, and the FastAPI serving layer. Wrote the report sections on the speed layer, serving layer and results.
+> **Senevirathne P.U.S:** Event contracts, Spark speed processing and window
+> metrics, PostgreSQL serving, and FastAPI.
 >
-> **Member C (Batch Processing & Data Quality):** Implemented the Airflow daily profitability DAG, Spark batch aggregation and cost reconciliation logic, the data quality gate with row quarantine, idempotent serving loads, and daily report generation. Wrote the report sections on requirements and the batch layer, and compiled the final report.
+> **Kodikara A.W.:** Airflow orchestration, Spark batch reconciliation,
+> profitability, data quality, and daily reports.
 >
-> **Joint:** Architecture decision (Lambda vs Kappa), technology stack justification, integration testing, and the demo video.
+> **Shared, with equal overall responsibility:** Architecture decisions,
+> integration, tests, documentation, final report, and live demo preparation.
 
 ---
 
-## 8. Two-Week Execution Plan
+## 8. Original Two-Week Execution Plan
 
 Three parallel tracks. Rows marked **Joint** are team-wide milestones.
 
@@ -348,7 +365,7 @@ Three parallel tracks. Rows marked **Joint** are team-wide milestones.
 | 11 | **Joint integration day:** full end-to-end run, fix cross-layer bugs, run §13 verification checks, each member walks the others through their layer | **Joint** | **Joint** |
 | 12 | `Makefile`, README setup steps, clean-clone reproducibility test, performance benchmark | Capture result screenshots; write report sections (speed layer, serving, results) | Write report sections (intro, requirements, batch, DQ); start compiling |
 | 13 | Write report sections (diagrams, ingestion, observability); review C's code | Review A's report sections and code | Compile full report; review B's sections |
-| 14 | **Joint:** record demo video, final review, contribution statement, submit | **Joint** | **Joint** |
+| 14 | **Joint:** prepare live demo, final review, contribution statement, submit | **Joint** | **Joint** |
 
 **Buffer strategy:** the highest-risk items are Member B's stateful idle detection (Day 6) and Member C's Airflow wiring (Days 8-9). If either slips, the other members help on integration day, and scope is cut in this order: (1) drop the second Airflow DAG, (2) simplify idle detection to a last-seen timestamp comparison, (3) reduce Grafana to one dashboard. **Never cut:** the architecture argument, the data quality gate, or observability. Those carry the most marks.
 
@@ -393,7 +410,7 @@ For the report appendix — how each local component maps to a managed cloud ser
 | Airflow + Spark container networking issues | Medium | Run the batch Spark job via `SparkSubmitOperator` against the same Spark container; keep a `PythonOperator` + local PySpark fallback |
 | Two-week window slips | Medium | The cut-order in §8; the architecture argument and report are written from Day 1, not deferred |
 | One track blocks another | Medium | Integration contracts signed off on Day 2; each member develops against committed sample fixtures until the real upstream is ready |
-| Uneven contribution or knowledge silos | Medium | Clear ownership in §7; mandatory cross-member PR review; each member presents their own layer in the demo |
+| Uneven contribution or knowledge silos | Medium | Shared review and understanding across all layers; each member can explain the whole pipeline in the demo |
 | Cannot defend the code in the viva | Medium | ADR per major decision, written as the decision is made; each member walks the others through their layer on Day 11 |
 
 ---
@@ -410,7 +427,7 @@ For the report appendix — how each local component maps to a managed cloud ser
 - [x] Report PDF, 8–15 pages, covering all seven required sections with real screenshots.
 - [x] An approximately eight-minute live-demo runbook is prepared; the brief permits a live demonstration instead of a recorded video.
 - [x] Every implemented architecture decision is covered by an ADR, and the transformation contracts are documented for viva preparation.
-- [x] An individual contribution statement records sole authorship; the three-member template does not apply to this individual submission.
+- [x] The three-member contribution statement records their distinct, equally weighted work areas and shared overall responsibility.
 - [x] Ten likely viva questions and evidence-based answers are prepared in `docs/VIVA_QA.md`.
 
 The actual live presentation (or optional recording) and the final portal upload remain student-performed submission actions, not implementation tasks.
