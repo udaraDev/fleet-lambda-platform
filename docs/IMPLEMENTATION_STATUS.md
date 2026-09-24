@@ -9,16 +9,18 @@ Implemented:
 - two deterministic Python data sources feeding Kafka and daily expense landing;
 - independent Spark raw and speed consumers with separate checkpoints;
 - immutable MinIO Parquet archives with committed row-count/SHA-256 manifests;
+- Kafka-offset identities for raw commits and a fail-closed retained-log gap repair;
 - Spark event-time windows with a two-minute watermark and retractable conflict
   corrections backed by per-event metric contributions;
-- transactional PostgreSQL live state, completed trips, alerts and daily results;
+- executor-partition staging plus transactional set-based PostgreSQL live state,
+  completed trips, metrics, alerts and daily results;
 - PySpark daily reconciliation orchestrated by Airflow, with quarantine and
   publication-integrity checks;
 - FastAPI fleet, parameterised zone-window, alert, report and health endpoints;
 - structured logs, Prometheus rules and a provisioned Grafana dashboard;
+- cross-layer live/raw lag health and incremental archive-integrity verification;
 - reproducible tests, clean-install evidence, report, demo runbook and submission
   packaging artifacts.
 
 Operational limitations and intentional production deferrals are documented in
-[FINAL_SCOPE.md](FINAL_SCOPE.md). Historical audits in this directory are retained
-only as a record of how the implementation was reviewed and improved.
+[FINAL_SCOPE.md](FINAL_SCOPE.md).

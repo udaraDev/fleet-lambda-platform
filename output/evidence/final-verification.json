@@ -1,17 +1,17 @@
 {
-  "review_date": "2026-09-23",
-  "unit_api_archive_tests": 48,
+  "review_date": "2026-09-24",
+  "unit_api_archive_tests": 54,
   "dependency_gated_host_skips": 1,
   "unittest_subtests": 17,
   "spark_python_parity": true,
-  "isolated_spark_postgresql_checks": 23,
+  "isolated_spark_postgresql_checks": 25,
   "clean_install": {
     "passed": true,
-    "scope": "fresh named volumes on the same Docker host using built images",
+    "scope": "fresh named volumes on the same Docker host using built images; disposable volumes removed",
     "dag_import_errors": 0,
     "reported_vehicles": 12,
     "reported_zones": 3,
-    "report_date": "2026-03-01"
+    "report_date": "2026-03-02"
   },
   "performance_benchmark": {
     "duration_seconds_per_level": 3,
@@ -22,7 +22,7 @@
   "report_health": {
     "healthy": true,
     "algorithm_version": 4,
-    "report_dates": 280,
+    "report_dates": 751,
     "missing_dates": 0,
     "invalid_exports": 0,
     "outdated_dates": 0,
@@ -31,12 +31,20 @@
     "pending_exports": 0
   },
   "result_quality": {
-    "complete_vehicle_days": 1568,
-    "incomplete_telemetry_vehicle_days": 1792
+    "complete_vehicle_days": 3512,
+    "incomplete_telemetry_vehicle_days": 5500
   },
   "remediation_verification": {
-    "archive_batches_verified": 8653,
+    "archive_batches_verified_at_snapshot": 10059,
     "legacy_batches_recovered_from_verified_sources": 7,
+    "archive_gap_events_recovered_from_kafka": 330795,
+    "archive_gap_event_dates": 191,
+    "raw_archive_lag_seconds": 0,
+    "incremental_archive_audit_sample": 25,
+    "staged_partition_serving_sink": true,
+    "driver_event_collection_removed": true,
+    "batch_2_checksums_verified_after_integration": true,
+    "integration_minio_prefix_isolated_and_removed": true,
     "report_health_http_status": 200,
     "zone_window_parameter_applied": true,
     "alert_idle_threshold_applied": true,

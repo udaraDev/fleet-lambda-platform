@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -19,6 +20,9 @@ class ApiTests(unittest.TestCase):
     @patch("api.main.fetch_all")
     def test_pipeline_healthy_with_postgres_decimals(self, fetch):
         fetch.return_value = [{"last_event_age_seconds": Decimal("1.5"),
+                               "raw_archive_lag_seconds": Decimal("30"),
+                               "live_event_ts": datetime(2026, 3, 1, tzinfo=timezone.utc),
+                               "raw_event_ts": datetime(2026, 3, 1, tzinfo=timezone.utc),
                                "rows_in": Decimal(120), "rows_rejected": Decimal(0)}]
         response = self.client.get("/health/pipeline")
         self.assertEqual(response.status_code, 200)
@@ -27,11 +31,22 @@ class ApiTests(unittest.TestCase):
     @patch("api.main.fetch_all")
     def test_no_data_and_stale_data_return_503(self, fetch):
         for age in (None, Decimal("121")):
-            fetch.return_value = [{"last_event_age_seconds": age, "rows_in": 0, "rows_rejected": 0}]
+            fetch.return_value = [{"last_event_age_seconds": age,
+                                   "raw_archive_lag_seconds": Decimal("0"),
+                                   "rows_in": 0, "rows_rejected": 0}]
             with self.subTest(age=age):
                 response = self.client.get("/health/pipeline")
                 self.assertEqual(response.status_code, 503)
                 self.assertEqual(response.json()["status"], "no_recent_data")
+
+    @patch("api.main.fetch_all")
+    def test_raw_archive_lag_returns_503(self, fetch):
+        fetch.return_value = [{"last_event_age_seconds": Decimal("1"),
+                               "raw_archive_lag_seconds": Decimal("7200"),
+                               "rows_in": 120, "rows_rejected": 0}]
+        response = self.client.get("/health/pipeline")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["status"], "raw_archive_lag")
 
     @patch("api.main.fetch_all", side_effect=RuntimeError("database down"))
     def test_database_failure_returns_503(self, fetch):
@@ -94,7 +109,9 @@ class ApiTests(unittest.TestCase):
         mock_conn.return_value = self._mock_health_conn([
             {"failed_dates": 1, "stalled_dates": 0},
             {"latest_report": date(2026, 3, 1), "pending_exports": 0},
-            {"expected_report": date(2026, 3, 1)},
+            {"expected_report": date(2026, 3, 1),
+             "raw_event_ts": datetime(2026, 3, 2, tzinfo=timezone.utc),
+             "live_event_ts": datetime(2026, 3, 2, tzinfo=timezone.utc)},
             [],
             {"n": 0},
             None,
@@ -110,12 +127,50 @@ class ApiTests(unittest.TestCase):
         mock_conn.return_value = self._mock_health_conn([
             {"failed_dates": 0, "stalled_dates": 0},
             {"latest_report": date(2026, 3, 1), "pending_exports": 0},
-            {"expected_report": date(2026, 3, 1)},
+            {"expected_report": date(2026, 3, 1),
+             "raw_event_ts": datetime(2026, 3, 2, tzinfo=timezone.utc),
+             "live_event_ts": datetime(2026, 3, 2, tzinfo=timezone.utc)},
             [],
             {"n": 0},
             None,
         ])
         self.assertEqual(self.client.get("/health/reports").status_code, 200)
+
+    @patch("api.main.export_matches", return_value=True)
+    @patch("common.db.connection")
+    def test_report_health_allows_one_date_of_batch_catchup(self, mock_conn, mock_exp):
+        from datetime import date
+        mock_conn.return_value = self._mock_health_conn([
+            {"failed_dates": 0, "stalled_dates": 0},
+            {"latest_report": date(2026, 3, 1), "pending_exports": 0},
+            {"expected_report": date(2026, 3, 2),
+             "raw_event_ts": datetime(2026, 3, 3, tzinfo=timezone.utc),
+             "live_event_ts": datetime(2026, 3, 3, tzinfo=timezone.utc)},
+            [],
+            {"n": 1},
+            None,
+        ])
+        response = self.client.get("/health/reports")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "processing")
+
+    @patch("api.main.export_matches", return_value=True)
+    @patch("common.db.connection")
+    def test_report_health_detects_live_raw_divergence(self, mock_conn, mock_exp):
+        from datetime import date
+        mock_conn.return_value = self._mock_health_conn([
+            {"failed_dates": 0, "stalled_dates": 0},
+            {"latest_report": date(2026, 3, 1), "pending_exports": 0},
+            {"expected_report": date(2026, 3, 1),
+             "raw_event_ts": datetime(2026, 3, 2, tzinfo=timezone.utc),
+             "live_event_ts": datetime(2026, 3, 3, tzinfo=timezone.utc)},
+            [],
+            {"n": 0},
+            None,
+        ])
+        response = self.client.get("/health/reports")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["raw_archive_lag_seconds"], 86400)
 
     @patch("api.main.fetch_all", return_value=[])
     def test_unprofitable_returns_404_when_no_losses(self, fetch):

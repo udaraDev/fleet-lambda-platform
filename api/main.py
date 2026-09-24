@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, Response, HTMLResponse
 
 from common.db import fetch_all
 from common.logging_conf import log
-from common.settings import NO_DATA_SECONDS, VEHICLE_COUNT
+from common.settings import NO_DATA_SECONDS, RAW_ARCHIVE_LAG_MINUTES, VEHICLE_COUNT
 from common.settings import DATA_DIR
 from common.publication import ALGORITHM_VERSION, export_matches
 
@@ -32,19 +32,31 @@ def health():
 
 
 def pipeline_status():
-    summary = fetch_all("""SELECT
+    summary = fetch_all("""WITH event_times AS (
+        SELECT (SELECT max(event_ts) FROM stream_event_keys) AS live_event_ts,
+               (SELECT max(max_event_ts) FROM pipeline_batches) AS raw_event_ts
+    ) SELECT
         (SELECT GREATEST(EXTRACT(EPOCH FROM (now()-max(accepted_at))),
             (SELECT EXTRACT(EPOCH FROM (now()-started_at)) FROM simulation_clock WHERE id=1)
             - EXTRACT(EPOCH FROM (max(event_ts)-timestamptz '2026-03-01 00:00:00+00'))
               * (SELECT day_seconds FROM simulation_clock WHERE id=1) / 86400.0)
          FROM stream_event_keys) AS last_event_age_seconds,
+        live_event_ts,raw_event_ts,
+        GREATEST(EXTRACT(EPOCH FROM (live_event_ts-raw_event_ts)),0) AS raw_archive_lag_seconds,
         COALESCE(sum(rows_in), 0) AS rows_in,
         COALESCE(sum(rows_rejected), 0) AS rows_rejected
-        FROM pipeline_batches""")[0]
+        FROM pipeline_batches CROSS JOIN event_times
+        GROUP BY live_event_ts,raw_event_ts""")[0]
     age = summary["last_event_age_seconds"]
-    healthy = age is not None and age <= NO_DATA_SECONDS
-    return {"status": "healthy" if healthy else "no_recent_data", "healthy": healthy,
-            "threshold_real_seconds": NO_DATA_SECONDS, **summary}
+    raw_lag = summary.get("raw_archive_lag_seconds")
+    fresh = age is not None and age <= NO_DATA_SECONDS
+    archive_current = raw_lag is not None and raw_lag <= RAW_ARCHIVE_LAG_MINUTES * 60
+    healthy = fresh and archive_current
+    status = "healthy" if healthy else "no_recent_data" if not fresh else "raw_archive_lag"
+    return {"status": status, "healthy": healthy,
+            "threshold_real_seconds": NO_DATA_SECONDS,
+            "raw_archive_lag_threshold_seconds": RAW_ARCHIVE_LAG_MINUTES * 60,
+            **summary}
 
 
 @app.get("/health/pipeline")
@@ -52,7 +64,12 @@ def health_pipeline():
     try:
         status = pipeline_status()
         # Decimal from PostgreSQL is converted explicitly for this Response.
-        status = {key: float(value) if isinstance(value, Decimal) else value for key, value in status.items()}
+        status = {
+            key: float(value) if isinstance(value, Decimal)
+            else value.isoformat() if hasattr(value, "isoformat")
+            else value
+            for key, value in status.items()
+        }
         return JSONResponse(status, status_code=200 if status["healthy"] else 503)
     except Exception:
         log("api", "database_unavailable")
@@ -81,8 +98,17 @@ def health_reports():
                     count(*) FILTER (WHERE export_status <> 'published') AS pending_exports
                     FROM daily_report_status""")
                 publication = dict(cur.fetchone())
-                cur.execute("SELECT max(max_event_ts)::date - 1 AS expected_report FROM pipeline_batches")
-                expected = cur.fetchone()["expected_report"]
+                cur.execute("""SELECT max(max_event_ts)::date - 1 AS expected_report,
+                    max(max_event_ts) AS raw_event_ts,
+                    (SELECT max(event_ts) FROM stream_event_keys) AS live_event_ts
+                    FROM pipeline_batches""")
+                layer_times = dict(cur.fetchone())
+                expected = layer_times["expected_report"]
+                raw_lag_seconds = None
+                if layer_times.get("raw_event_ts") and layer_times.get("live_event_ts"):
+                    raw_lag_seconds = max(0.0, (
+                        layer_times["live_event_ts"] - layer_times["raw_event_ts"]
+                    ).total_seconds())
                 cur.execute("SELECT dt,output_sha256,algorithm_version FROM daily_report_status WHERE export_status='published'")
                 exports = [dict(r) for r in cur.fetchall()]
                 cur.execute("""SELECT count(*) AS n FROM generate_series(date '2026-03-01',
@@ -106,17 +132,31 @@ def health_reports():
                    not publication["pending_exports"] and not bad_exports and not old_versions
                    and not missing and expected is not None and
                    publication["latest_report"] is not None and
-                   publication["latest_report"] >= expected)
+                   publication["latest_report"] >= expected and
+                   raw_lag_seconds is not None and
+                   raw_lag_seconds <= RAW_ARCHIVE_LAG_MINUTES * 60)
+        # The accelerated simulator can close a date while Spark is still scanning
+        # the archive and before that date's pipeline_runs row is inserted. Treat one
+        # consecutive unpublished date as bounded catch-up; two missed dates still
+        # become a real degradation even if Airflow metadata is unavailable here.
+        one_date_catchup = (
+            missing == 1 and expected is not None and
+            publication["latest_report"] == expected - timedelta(days=1)
+        )
         # Return 'processing' when the only failure signal is the brand-new expected
-        # date not yet published, and Airflow is actively running it (< 3 min ago).
-        if (not healthy and active_run and not summary["failed_dates"] and
-                not summary["stalled_dates"] and not bad_exports and not old_versions):
+        # date not yet published and reconciliation is active or only one date behind.
+        if (not healthy and (active_run or one_date_catchup) and not summary["failed_dates"] and
+                not summary["stalled_dates"] and not bad_exports and not old_versions and
+                raw_lag_seconds is not None and
+                raw_lag_seconds <= RAW_ARCHIVE_LAG_MINUTES * 60):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(jsonable_encoder({
                 "healthy": True, "status": "processing",
                 "expected_report": expected, "missing_dates": missing,
                 "invalid_exports": 0, "outdated_dates": 0,
                 "algorithm_version": ALGORITHM_VERSION,
+                "raw_archive_lag_seconds": raw_lag_seconds,
+                "raw_archive_lag_threshold_seconds": RAW_ARCHIVE_LAG_MINUTES * 60,
                 **summary, **publication}), status_code=200)
         from fastapi.encoders import jsonable_encoder
         return JSONResponse(jsonable_encoder({
@@ -124,6 +164,8 @@ def health_reports():
             "expected_report": expected, "missing_dates": missing,
             "invalid_exports": bad_exports, "outdated_dates": old_versions,
             "algorithm_version": ALGORITHM_VERSION,
+            "raw_archive_lag_seconds": raw_lag_seconds,
+            "raw_archive_lag_threshold_seconds": RAW_ARCHIVE_LAG_MINUTES * 60,
             **summary, **publication}), status_code=200 if healthy else 503)
     except Exception as exc:
         log("api", "report_health_unavailable", error=str(exc))
@@ -239,6 +281,8 @@ def metrics():
         ("fleet_events_ingested_total", "Total Kafka rows observed", status["rows_in"]),
         ("fleet_events_rejected_total", "Total streaming rows rejected", status["rows_rejected"]),
         ("fleet_last_event_age_seconds", "Real-time age of the latest accepted event", age if age is not None else -1),
+        ("fleet_raw_archive_lag_seconds", "Simulated event-time lead of serving over raw archive",
+         status.get("raw_archive_lag_seconds") if status.get("raw_archive_lag_seconds") is not None else -1),
     )
     for name, description, value in values:
         Gauge(name, description, registry=registry).set(float(value))

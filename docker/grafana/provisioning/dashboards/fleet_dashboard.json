@@ -57,6 +57,18 @@
     },
     {
       "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"},
+        "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": 0}, {"color": "yellow", "value": 1800}, {"color": "red", "value": 3600}]},
+        "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 5, "x": 19, "y": 0},
+      "id": 7,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "title": "Raw Archive Lag",
+      "type": "stat",
+      "targets": [{"datasource": "Prometheus", "expr": "fleet_raw_archive_lag_seconds", "refId": "A"}]
+    },
+    {
+      "datasource": "Prometheus",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
       "id": 5,
@@ -77,7 +89,8 @@
       "title": "Last Event Age Over Time",
       "type": "timeseries",
       "targets": [
-        {"datasource": "Prometheus", "expr": "fleet_last_event_age_seconds", "legendFormat": "age (s)", "refId": "A"}
+        {"datasource": "Prometheus", "expr": "fleet_last_event_age_seconds", "legendFormat": "accepted event age (s)", "refId": "A"},
+        {"datasource": "Prometheus", "expr": "fleet_raw_archive_lag_seconds", "legendFormat": "raw archive lag (sim s)", "refId": "B"}
       ]
     }
   ],

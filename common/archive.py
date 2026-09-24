@@ -4,6 +4,7 @@ Updated to use MinIO (S3) instead of local filesystem.
 """
 
 import hashlib
+import json
 from pathlib import Path
 import s3fs
 import pyarrow.parquet as pq
@@ -24,6 +25,12 @@ def digest(path, fs=None):
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             value.update(block)
     return value.hexdigest()
+
+
+def manifest_fingerprint(manifest):
+    """Stable digest used by the incremental archive-integrity audit."""
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def build_manifest(batch_id, expected_rows):

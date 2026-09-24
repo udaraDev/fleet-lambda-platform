@@ -152,10 +152,11 @@
   <text x="500" y="567" text-anchor="middle" font-size="10" fill="#C9D1D9">Fleet Overview panel</text>
   <text x="500" y="581" text-anchor="middle" font-size="10" fill="#C9D1D9">Pipeline Health panel</text>
   <text x="500" y="595" text-anchor="middle" font-size="10" fill="#C9D1D9">Alert rules:</text>
-  <text x="500" y="609" text-anchor="middle" font-size="10" fill="#F4845F">- no data in 2 min</text>
-  <text x="500" y="623" text-anchor="middle" font-size="10" fill="#F4845F">- DQ failure</text>
-  <text x="500" y="637" text-anchor="middle" font-size="10" fill="#F4845F">- idle vehicle spike</text>
-  <text x="500" y="655" text-anchor="middle" font-size="10" fill="#8B949E">port 3000</text>
+  <text x="500" y="607" text-anchor="middle" font-size="9" fill="#F4845F">- pipeline freshness</text>
+  <text x="500" y="619" text-anchor="middle" font-size="9" fill="#F4845F">- raw archive lag</text>
+  <text x="500" y="631" text-anchor="middle" font-size="9" fill="#F4845F">- DQ failure</text>
+  <text x="500" y="643" text-anchor="middle" font-size="9" fill="#F4845F">- idle vehicle spike</text>
+  <text x="500" y="658" text-anchor="middle" font-size="10" fill="#8B949E">port 3000</text>
 
   <!-- Arrows: Serving Layer -->
   <line x1="952" y1="445" x2="120" y2="523" stroke="#58A6FF" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr3)"/>

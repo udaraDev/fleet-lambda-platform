@@ -3,7 +3,8 @@
 Runs hourly and checks:
   1. Quarantine rate for recent expense runs (should be <= DQ_FAILURE_THRESHOLD).
   2. Dead-letter accumulation rate (should be near zero).
-  3. Archive manifest integrity for every committed batch.
+  3. Archive manifest integrity for every new/changed batch plus a rotating
+     sample of previously verified immutable batches.
   4. Report export SHA-256 for every published date.
 
 Fails the relevant Airflow task and logs a structured DQ event if a check fails.
@@ -56,11 +57,12 @@ def _check_dead_letter_rate(**ctx):
 
 
 def _check_archive_integrity(**ctx):
-    """Verify SHA-256 manifests for every committed batch."""
-    from common.db import fetch_all
-    from common.archive import _get_fs, digest
+    """Verify new/changed manifests plus a rotating sample of older batches."""
+    from common.db import connection, fetch_all
+    from common.archive import _get_fs, digest, manifest_fingerprint
     from common.settings import MINIO_BUCKET
     from common.logging_conf import log
+    from psycopg2.extras import execute_values
 
     import logging
     logging.getLogger("botocore.httpchecksum").setLevel(logging.WARNING)
@@ -68,9 +70,24 @@ def _check_archive_integrity(**ctx):
         SELECT batch_id, archive_manifest, rows_valid FROM pipeline_batches
         ORDER BY batch_id
     """)
+    prior = {row["batch_id"]: row for row in fetch_all("""
+        SELECT batch_id,manifest_sha256,verified_at FROM dq_archive_verification
+        ORDER BY verified_at,batch_id
+    """)}
+    changed = [b for b in batches if not b.get("archive_manifest") or
+               b["batch_id"] not in prior or
+               prior[b["batch_id"]]["manifest_sha256"] !=
+               manifest_fingerprint(b["archive_manifest"])]
+    # Recheck a bounded rotating sample so later object damage is eventually
+    # detected without rereading thousands of immutable files every hour.
+    sample_ids = {row["batch_id"] for row in sorted(
+        prior.values(), key=lambda row: (row["verified_at"], row["batch_id"]))[:25]}
+    candidates = {b["batch_id"]: b for b in changed}
+    candidates.update({b["batch_id"]: b for b in batches if b["batch_id"] in sample_ids})
     failed = []
+    verified = []
     fs = _get_fs()
-    for b in batches:
+    for b in candidates.values():
         manifest = b.get("archive_manifest") or {}
         if not manifest or manifest.get("rows") != b.get("rows_valid"):
             failed.append(b["batch_id"])
@@ -89,10 +106,19 @@ def _check_archive_integrity(**ctx):
                 break
         if not ok:
             failed.append(b["batch_id"])
+        else:
+            verified.append((b["batch_id"], manifest_fingerprint(manifest)))
     if failed:
         log("dq_dag", "archive_integrity_failed", batch_ids=failed)
         raise ValueError(f"Archive integrity failed for batches: {failed}")
-    log("dq_dag", "archive_integrity_ok", checked=len(batches))
+    if verified:
+        with connection() as conn, conn.cursor() as cur:
+            execute_values(cur, """INSERT INTO dq_archive_verification
+                (batch_id,manifest_sha256) VALUES %s
+                ON CONFLICT(batch_id) DO UPDATE SET
+                manifest_sha256=EXCLUDED.manifest_sha256,verified_at=now()""", verified)
+    log("dq_dag", "archive_integrity_ok", checked=len(candidates),
+        total_committed=len(batches), new_or_changed=len(changed), rotating_sample=len(sample_ids))
 
 
 def _check_export_integrity(**ctx):

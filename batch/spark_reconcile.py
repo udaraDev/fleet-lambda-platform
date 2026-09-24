@@ -24,6 +24,9 @@ def session():
                     .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
                     .config("spark.hadoop.fs.s3a.path.style.access", "true")
                     .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+                    .config("spark.hadoop.fs.s3a.attempts.maximum", "10")
+                    .config("spark.hadoop.fs.s3a.retry.limit", "10")
+                    .config("spark.hadoop.fs.s3a.retry.interval", "1s")
                     .getOrCreate())
         _session.sparkContext.setLogLevel("WARN")
     return _session

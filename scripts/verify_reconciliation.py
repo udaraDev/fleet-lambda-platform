@@ -54,6 +54,8 @@ def verify():
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "002_integrity.sql").read_text())
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "003_completion.sql").read_text())
             cur.execute((Path(__file__).resolve().parents[1] / "sql" / "004_plan_tables.sql").read_text(encoding="utf-8-sig"))
+            cur.execute((Path(__file__).resolve().parents[1] / "sql" / "005_retractable_metrics.sql").read_text(encoding="utf-8-sig"))
+            cur.execute((Path(__file__).resolve().parents[1] / "sql" / "006_archive_offsets.sql").read_text(encoding="utf-8-sig"))
         from streaming.sink import bulk_serve
         first = dict(make_event(1, 5, SIM_START + timedelta(days=3), SIM_START), time_of_day_bucket="night")
         with connection() as conn, conn.cursor() as cur:
@@ -70,6 +72,28 @@ def verify():
             assert bulk_serve(cur, [good], 13) == 0
             cur.execute("SELECT count(*) FROM completed_trips")
             assert cur.fetchone()[0] == 1, "Conflict prevented subsequent good data"
+
+        # Production serving uses executor partition staging and a set-based
+        # merge. Exercise that path independently of the compatibility helper.
+        import streaming.staged_sink as staged_sink
+        staged_event = dict(make_event(3, 19, SIM_START + timedelta(days=4), SIM_START),
+                            time_of_day_bucket="night", partition=0, offset=19)
+
+        class FakeRow:
+            def __init__(self, value):
+                self.value = value
+
+            def asDict(self, recursive=False):
+                return dict(self.value)
+
+        staged_run = str(uuid.uuid4())
+        with patch.object(staged_sink, "connection", connection):
+            staged_sink.stage_partition(iter([FakeRow(staged_event)]), staged_run, 20)
+        with connection() as conn, conn.cursor() as cur:
+            assert staged_sink.merge_staged(cur, staged_run, 20) == 0
+            cur.execute("SELECT count(*) FROM stream_event_keys WHERE event_id=%s",
+                        (staged_event["event_id"],))
+            assert cur.fetchone()[0] == 1, "Staged serving merge lost a valid event"
         from batch.spark_reconcile import aggregate
         empty, coverage, _ = aggregate([], [], "2026-03-10", ["V-001"])
         assert empty[0]["profit_cents"] is None and not coverage["V-001"]["complete"]
@@ -261,28 +285,34 @@ def verify():
                                               "raw string, partition int, offset long")
             frame = frame.withColumn("event", F.from_json("raw", schema_type)).withColumn("error", validation_error())
             raw_batch_id = 1_000_000_000 + uuid.uuid4().int % 900_000_000
+            test_archive_root = f"{MINIO_BUCKET}/verification/{schema}"
             raw_job._STARTED_AT = datetime.now(timezone.utc)
             try:
-                with patch.multiple(raw_job, connection=connection):
-                    raw_job.process_batch(frame, raw_batch_id)
-                    raw_job.process_batch(frame, raw_batch_id)
+                with patch.multiple(raw_job, connection=connection,
+                                    MINIO_BUCKET=test_archive_root), \
+                        patch("common.archive.MINIO_BUCKET", test_archive_root):
+                    # The outer callback's advisory lock is database-wide and
+                    # intentionally belongs to the live writer. This disposable
+                    # schema test exercises the archive transaction directly.
+                    raw_job._process_batch(frame, raw_batch_id)
+                    raw_job._process_batch(frame, raw_batch_id)
                 ingestion = fetch_all(
-                    "SELECT rows_valid,rows_rejected FROM pipeline_batches WHERE batch_id=%s",
+                    """SELECT batch_id,rows_valid,rows_rejected FROM pipeline_batches
+                    WHERE source_batch_id=%s ORDER BY batch_id DESC LIMIT 1""",
                     (raw_batch_id,),
                 )[0]
+                archive_batch_id = ingestion.pop("batch_id")
                 assert ingestion == {"rows_valid": 1, "rows_rejected": 3}, ingestion
             finally:
                 fs = _get_fs()
-                for prefix in (f"{MINIO_BUCKET}/{raw_batch_id}",
-                               f"{MINIO_BUCKET}/quarantine/{raw_batch_id}"):
-                    if fs.exists(prefix):
-                        fs.rm(prefix, recursive=True)
+                if fs.exists(test_archive_root):
+                    fs.rm(test_archive_root, recursive=True)
             print(json.dumps({"result": "passed", "checks": [
                 "day readiness", "duplicate trip replay", "expense-only losses", "identical rerun",
                 "corrected expense", "bad-data quarantine", "preserve last good report",
                 "registered vehicle visibility", "unknown missing cost", "concurrent-run lock", "missing archive safety",
                 "bulk cross-batch replay", "conflict recovery", "missing telemetry", "native raw-stream validation",
-                "raw commit idempotency", "partial-day gap", "Spark conflict detection", "export failure recovery",
+                "raw offset identity", "staged serving merge", "raw commit idempotency", "partial-day gap", "Spark conflict detection", "export failure recovery",
                 "missing export recovery", "corrupt export recovery", "timestamp identity parity", "conflicted state removal"
             ]}, indent=2))
     finally:

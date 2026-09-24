@@ -40,6 +40,10 @@ pipeline:
   # A pipeline health check returns 503 if the last event is older than this.
   no_data_seconds: 120
 
+  # Maximum permitted event-time lead of live serving over committed raw data.
+  # The raw query normally trails by at most a few five-second micro-batches.
+  raw_archive_lag_minutes: 60
+
   # A pipeline_runs row is considered stalled if it has been running longer than this.
   stall_minutes: 20
 

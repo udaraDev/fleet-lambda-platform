@@ -57,7 +57,9 @@ class CompletionTests(unittest.TestCase):
         conn = self._mock_conn([
             {'failed_dates': 0, 'stalled_dates': 0},         # summary fetchone
             {'latest_report': date(2026, 3, 3), 'pending_exports': 0},  # publication fetchone
-            {'expected_report': date(2026, 3, 3)},            # expected fetchone
+            {'expected_report': date(2026, 3, 3),
+             'raw_event_ts': datetime(2026, 3, 4, tzinfo=timezone.utc),
+             'live_event_ts': datetime(2026, 3, 4, tzinfo=timezone.utc)},
             [],                                               # exports fetchall
             {'n': 1},                                         # missing fetchone
             None,                                             # active_run fetchone
@@ -76,7 +78,9 @@ class CompletionTests(unittest.TestCase):
         conn = self._mock_conn([
             {'failed_dates': 0, 'stalled_dates': 0},
             {'latest_report': date(2026, 3, 1), 'pending_exports': 0},
-            {'expected_report': date(2026, 3, 1)},
+            {'expected_report': date(2026, 3, 1),
+             'raw_event_ts': datetime(2026, 3, 2, tzinfo=timezone.utc),
+             'live_event_ts': datetime(2026, 3, 2, tzinfo=timezone.utc)},
             [{'dt': date(2026, 3, 1), 'output_sha256': 'bad', 'algorithm_version': ALGORITHM_VERSION}],
             {'n': 0},
             None,

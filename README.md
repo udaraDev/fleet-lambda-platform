@@ -7,13 +7,13 @@ trip revenue against fuel and maintenance expenses.
 recorded in [FINAL_SCOPE.md](docs/FINAL_SCOPE.md). PROJECT_PLAN.md is the original
 proposal and is not a claim that every optional component was implemented.
 
-The priority correctness upgrade is described in [priority fixes](docs/PRIORITY_FIXES.md).
-Batch aggregation now uses Spark; missing telemetry is explicitly incomplete,
-committed archives are verified, and serving writes use bounded transactional bulks.
+Batch aggregation uses Spark; missing telemetry is explicitly incomplete,
+committed archives are verified by Kafka offset identity, and streaming executors
+bulk-stage partitions for a set-based transactional PostgreSQL merge.
 
 ### Upgrade an existing dataset
 
-Fresh installations run all five ordered SQL files automatically. Existing volumes need
+Fresh installations run all six ordered SQL migrations automatically. Existing volumes need
 the additive migration below before starting the upgraded writer. Back up the fleet
 database first; do not delete checkpoints, archives or volumes.
 
@@ -33,6 +33,12 @@ If a hard shutdown left a legacy Parquet file truncated but the corresponding Ka
 offset range is retained, recover only the named batches with
 `python -m scripts.recover_legacy_archive <batch-id> ...`. The recovery verifies
 committed row counts and persistent event fingerprints before replacing a manifest.
+
+If a checkpoint was recreated and a live/raw event-time gap is reported, stop only
+`streaming-raw` and run `python -m scripts.repair_archive_gap --include-boundary`.
+The command snapshots retained Kafka offsets, verifies serving identities and commits
+a checksummed recovery batch. It fails without modifying the ledger when Kafka no
+longer contains the missing interval.
 
 ## Architecture
 
@@ -240,13 +246,17 @@ docker compose cp api:/data/reports/profitability_2026-03-01.json reports/
 
 ## Implementation limits
 
-This version uses one Kafka broker and single-node Spark. Micro-batches are bounded
-and capped at 2,500 rows before collection; serving uses bulk database operations
-inside one transaction. Daily trip state stays in Spark,
+This version uses one Kafka broker and single-node Spark. Streaming records are
+written by executor partition into an unlogged staging table, then merged with
+set-based SQL inside one transaction; raw events and window rows are not collected
+on the Python driver. Daily trip state stays in Spark,
 with only fleet-size summaries collected. It does not claim end-to-end exactly-once delivery. Simulation restarts may
 skip ticks. Idle detection follows observed state changes and does not reconstruct
 late historical sessions. Database and JSON publication are separate operations;
 a pending publication status exposes export failure until Airflow retries it.
+Raw commits are idempotent by Kafka partition/offset fingerprint rather than the
+restartable Spark batch number. Both health endpoints expose and enforce the maximum
+permitted live/raw event-time lag.
 Published JSON is versioned and SHA-256 verified; missing or corrupted output is
 regenerated. Use [DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) for the prepared live demo.
 Use [VIVA_QA.md](docs/VIVA_QA.md) for ten likely oral-exam questions and
@@ -263,6 +273,9 @@ docker compose exec -T api python -m scripts.benchmark --eps 100 --duration 10 -
 The final short 10/100/500 eps smoke results are recorded in
 `output/evidence/performance-benchmark.json`; all published events were accepted.
 They include the five-second stream trigger and are not a sustained capacity claim.
+The GitHub Actions workflow also builds the pinned images from a clean Ubuntu
+checkout and runs the fresh-volume verification; treat that cross-machine claim as
+verified only after the repository's `clean-compose` job is green.
 
 ## Technical references
 

@@ -40,6 +40,8 @@ SIM_DAY_SECONDS = int(os.getenv("SIM_DAY_SECONDS", _sim.get("sim_day_seconds", 3
 EVENT_INTERVAL_SECONDS = float(os.getenv("EVENT_INTERVAL_SECONDS", _sim.get("event_interval_seconds", 2.0)))
 VEHICLE_COUNT = int(os.getenv("VEHICLE_COUNT", _sim.get("vehicle_count", 12)))
 NO_DATA_SECONDS = int(os.getenv("NO_DATA_SECONDS", _pip.get("no_data_seconds", 120)))
+RAW_ARCHIVE_LAG_MINUTES = int(os.getenv(
+    "RAW_ARCHIVE_LAG_MINUTES", _pip.get("raw_archive_lag_minutes", 60)))
 DQ_FAILURE_THRESHOLD = float(os.getenv("DQ_FAILURE_THRESHOLD", _dq.get("dq_failure_threshold", 0.05)))
 MAX_CHANGED_DATES_PER_RUN = int(os.getenv("MAX_CHANGED_DATES_PER_RUN", _pip.get("max_changed_dates_per_run", 5)))
 IDLE_ALERT_MINUTES = int(os.getenv("IDLE_ALERT_MINUTES", _srv.get("idle_alert_minutes", 5)))
@@ -50,7 +52,8 @@ MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", _minio.get("access_key", "minio
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", _minio.get("secret_key", "minioadmin"))
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", _minio.get("bucket", "fleet-raw"))
 
-if SIM_DAY_SECONDS <= 0 or EVENT_INTERVAL_SECONDS <= 0 or VEHICLE_COUNT <= 0:
+if (SIM_DAY_SECONDS <= 0 or EVENT_INTERVAL_SECONDS <= 0 or VEHICLE_COUNT <= 0
+        or RAW_ARCHIVE_LAG_MINUTES <= 0):
     raise ValueError("Clock, interval and fleet size must be positive")
 if not 0 <= DQ_FAILURE_THRESHOLD <= 1:
     raise ValueError("DQ_FAILURE_THRESHOLD must be between 0 and 1")

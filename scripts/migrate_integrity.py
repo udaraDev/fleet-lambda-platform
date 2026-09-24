@@ -5,7 +5,7 @@ from psycopg2.extras import Json, execute_values
 import pyarrow.parquet as pq
 from streaming.sink import fingerprint
 
-from common.archive import build_manifest
+from common.archive import build_manifest, manifest_fingerprint
 from common.db import connection, fetch_all
 from common.settings import DATA_DIR
 
@@ -45,11 +45,17 @@ def migrate():
         cur.execute((Path(__file__).resolve().parents[1] / "sql" / "003_completion.sql").read_text())
         cur.execute((Path(__file__).resolve().parents[1] / "sql" / "004_plan_tables.sql").read_text(encoding="utf-8-sig"))
         cur.execute((Path(__file__).resolve().parents[1] / "sql" / "005_retractable_metrics.sql").read_text(encoding="utf-8-sig"))
+        cur.execute((Path(__file__).resolve().parents[1] / "sql" / "006_archive_offsets.sql").read_text(encoding="utf-8-sig"))
     batches = fetch_all("SELECT batch_id,rows_valid,archive_manifest FROM pipeline_batches ORDER BY batch_id")
     for index, batch in enumerate(batches, 1):
         manifest = batch.get("archive_manifest")
         if manifest:
             _restore_legacy_files(batch["batch_id"], manifest)
+            with connection() as conn, conn.cursor() as cur:
+                cur.execute("""INSERT INTO dq_archive_verification(batch_id,manifest_sha256)
+                    VALUES (%s,%s) ON CONFLICT(batch_id) DO UPDATE SET
+                    manifest_sha256=EXCLUDED.manifest_sha256,verified_at=now()""",
+                    (batch["batch_id"], manifest_fingerprint(manifest)))
             if index % 500 == 0:
                 print(f"Verified/restored {index}/{len(batches)} archive batches", flush=True)
             continue
@@ -72,6 +78,10 @@ def migrate():
                             for e in rows.values()])
             cur.execute("UPDATE pipeline_batches SET archive_manifest=%s WHERE batch_id=%s AND archive_manifest IS NULL",
                         (Json(manifest), batch["batch_id"]))
+            cur.execute("""INSERT INTO dq_archive_verification(batch_id,manifest_sha256)
+                VALUES (%s,%s) ON CONFLICT(batch_id) DO UPDATE SET
+                manifest_sha256=EXCLUDED.manifest_sha256,verified_at=now()""",
+                (batch["batch_id"], manifest_fingerprint(manifest)))
     print("Integrity migration complete; legacy archives restored/baselined against committed row counts.")
 
 

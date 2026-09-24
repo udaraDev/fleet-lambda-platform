@@ -1,14 +1,14 @@
 ﻿groups:
   - name: fleet_alerts
     rules:
-      - alert: FleetPipelineNoData
+      - alert: FleetPipelineUnhealthy
         expr: fleet_pipeline_healthy == 0
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Fleet pipeline has no recent data"
-          description: "No telemetry events received in the last 2 minutes. Producer may be down."
+          summary: "Fleet pipeline is unhealthy"
+          description: "Accepted telemetry is stale or the immutable raw archive is behind live serving."
 
       - alert: FleetHighRejectionRate
         expr: fleet_events_rejected_total / (fleet_events_ingested_total + 1) > 0.05
@@ -27,3 +27,12 @@
         annotations:
           summary: "Last telemetry event is stale"
           description: "The most recent event is more than 120 seconds old."
+
+      - alert: FleetRawArchiveLag
+        expr: fleet_raw_archive_lag_seconds > 3600
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Raw archive is behind live serving"
+          description: "The immutable raw layer trails live event time by more than 60 simulated minutes."

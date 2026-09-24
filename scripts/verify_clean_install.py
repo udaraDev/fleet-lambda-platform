@@ -29,7 +29,10 @@ def main():
     output = ROOT / 'output' / 'evidence'
     output.mkdir(parents=True, exist_ok=True)
     result = {'project': name, 'simulated_day_real_seconds': 120,
-              'scope': 'fresh volumes; existing images and same Docker host', 'passed': False}
+              'scope': os.getenv(
+                  'CLEAN_INSTALL_SCOPE',
+                  'fresh volumes; existing images and same Docker host'),
+              'passed': False}
     def compose(*args):
         return subprocess.check_output(['docker', 'compose', '-p', name, *args], cwd=ROOT,
                                        env=env, text=True, stderr=subprocess.STDOUT, timeout=900)

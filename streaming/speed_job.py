@@ -4,13 +4,14 @@ Reads from Kafka, applies formal Spark tumbling windows + watermarks for zone me
 and writes live state to PostgreSQL. Maintains a separate checkpoint from the raw archive.
 """
 
-import json
+from functools import partial
+import uuid
 from datetime import datetime, timedelta, timezone
-from psycopg2.extras import execute_values
-
 from common.db import connection, clock_start
-from common.domain import SIM_START, simulated_time, validate_event
-from streaming.sink import bulk_serve, EVENT_FIELDS
+from common.domain import SIM_START, simulated_time
+from streaming.sink import EVENT_FIELDS
+from streaming.staged_sink import (dead_letter_partition, merge_staged,
+                                   metrics_partition, stage_partition)
 from common.logging_conf import log
 from common.settings import DATA_DIR, KAFKA_BOOTSTRAP, TOPIC, SIM_DAY_SECONDS, EVENT_INTERVAL_SECONDS
 
@@ -34,19 +35,11 @@ def process_serving_batch(frame, batch_id):
             (F.try_to_timestamp("event.event_ts") < F.lit(SIM_START)) |
             (F.try_to_timestamp("event.event_ts") > F.lit(upper)), F.lit("outside_simulation_time")))
             
-        invalid = frame.filter("error IS NOT NULL").select("raw", "error", "partition", "offset").collect()
-        if invalid:
-            from kafka import KafkaProducer
-            from common.settings import KAFKA_BOOTSTRAP
-            from streaming.sink import dead_letter_send
+        frame.filter("error IS NOT NULL").select(
+            "raw", "error", "partition", "offset"
+        ).foreachPartition(partial(dead_letter_partition, batch_id=batch_id))
 
-            producer = KafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
-            with connection() as conn, conn.cursor() as cur:
-                for row in invalid:
-                    dead_letter_send(producer, row["raw"], row["error"], row["partition"], row["offset"], batch_id, cur)
-            producer.close()
-
-        valid = frame.filter("error IS NULL").select("event.*").withColumn(
+        valid = frame.filter("error IS NULL").select("event.*", "partition", "offset").withColumn(
             "event_time", F.to_timestamp("event_ts")
         ).withColumn(
             "time_of_day_bucket",
@@ -55,12 +48,12 @@ def process_serving_batch(frame, batch_id):
              .when(F.hour("event_time") < 18, "afternoon").otherwise("evening")
         )
         
-        events = valid.select(*EVENT_FIELDS, "ingest_ts", "time_of_day_bucket").collect()
-        
+        run_id = str(uuid.uuid4())
+        valid.select(*EVENT_FIELDS, "ingest_ts", "time_of_day_bucket",
+                     "partition", "offset").foreachPartition(
+            partial(stage_partition, run_id=run_id, batch_id=batch_id))
         with connection() as conn, conn.cursor() as cur:
-            # Serialize serving commits even if an operator starts a second writer.
-            cur.execute("SELECT pg_advisory_xact_lock(8203, 0)")
-            conflicts = bulk_serve(cur, [row.asDict() for row in events], batch_id)
+            conflicts = merge_staged(cur, run_id, batch_id)
             
         log("streaming-speed", "serving_committed", batch_id=batch_id, rows_in=count, conflicts=conflicts)
     finally:
@@ -69,25 +62,8 @@ def process_serving_batch(frame, batch_id):
 
 def process_metrics_batch(frame, batch_id):
     """Upsert tumbling window metrics to PostgreSQL."""
-    metrics = frame.collect()
-    if not metrics:
-        return
-        
-    with connection() as conn, conn.cursor() as cur:
-        execute_values(cur, """
-            INSERT INTO rt_zone_metrics
-            (window_start, zone, reporting_vehicles, active_vehicles, idle_ratio, trips, earnings_cents)
-            VALUES %s ON CONFLICT (window_start, zone) DO UPDATE SET
-            reporting_vehicles=EXCLUDED.reporting_vehicles,
-            active_vehicles=EXCLUDED.active_vehicles, 
-            idle_ratio=EXCLUDED.idle_ratio,
-            trips=EXCLUDED.trips, 
-            earnings_cents=EXCLUDED.earnings_cents, 
-            updated_at=now()
-            WHERE NOT rt_zone_metrics.authoritative_corrected
-        """, [(r["window_start"], r["zone"], r["reporting"], r["active_vehicles"], r["idle_ratio"],
-               r["trips"], r["earnings_cents"]) for r in metrics])
-    log("streaming-speed", "metrics_committed", batch_id=batch_id, zones=len(metrics))
+    frame.foreachPartition(metrics_partition)
+    log("streaming-speed", "metrics_committed", batch_id=batch_id)
 
 
 def main():

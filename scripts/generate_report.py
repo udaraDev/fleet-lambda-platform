@@ -22,9 +22,10 @@ MUTED = colors.HexColor('#526570')
 
 class Architecture(Flowable):
     def __init__(self):
-        super().__init__(); self.width = 165*mm; self.height = 112*mm
+        super().__init__(); self.width = 165*mm; self.height = 100*mm
     def draw(self):
         c = self.canv
+        c.saveState(); c.translate(14*mm, 0); c.scale(.89, .89)
         def box(x,y,w,h,title,sub):
             c.setFillColor(PALE); c.setStrokeColor(TEAL); c.roundRect(x,y,w,h,3*mm,fill=1)
             c.setFillColor(NAVY); c.setFont('Helvetica-Bold',9); c.drawCentredString(x+w/2,y+h-6*mm,title)
@@ -53,6 +54,7 @@ class Architecture(Flowable):
         box(5*mm,8*mm,32*mm,24*mm,'Serving',['FastAPI + Prometheus','Grafana dashboards'])
         c.line(133*mm,8*mm,133*mm,3*mm); c.line(133*mm,3*mm,37*mm,3*mm)
         arrow(37*mm,3*mm,37*mm,8*mm)
+        c.restoreState()
 
 
 def p(text, style='BodyX'):
@@ -113,7 +115,7 @@ story += [Spacer(1,35*mm), p('FLEET LAMBDA PLATFORM','TitleX'),
           p('Real-time ride-hailing operations and daily profitability reconciliation','SubTitle'),
           Spacer(1,18*mm), p('<b>EC8203 Applied Big Data Engineering Mini-Project</b>','SubTitle'),
           Spacer(1,22*mm), table([['Author','Programme'],['Udara Subodhitha Senevirathna','BSc Computer Engineering'],
-          ['Institution','University of Ruhuna'],['Report date','23 September 2026']], [65*mm,80*mm],8.5),
+          ['Institution','University of Ruhuna'],['Report date','24 September 2026']], [65*mm,80*mm],8.5),
           Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation and measured checks. It distinguishes local classroom evidence from production claims and does not claim a recorded demo video or production-scale capacity.','Callout'),
           PageBreak()]
 
@@ -148,10 +150,7 @@ story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
 story += [p('3. Delivered architecture and data flow','H1X'), Architecture(),
  p('Figure 1. Delivered local Lambda architecture. Kafka feeds independent speed and raw consumers; PostgreSQL serves FastAPI and Prometheus is visualised in Grafana. The MinIO archive, database and checkpoints are operated as one dataset.' ,'Small'),
  p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. Per-event metric contributions allow the serving transaction to retract a discredited identity or trip and protect the corrected window from a later non-retracting Spark update. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
- PageBreak(), p('Storage contracts','H2X')] + bullets([
- 'Raw MinIO Parquet files are accepted only through committed batch manifests containing row counts and SHA-256 digests.',
- 'PostgreSQL stores latest vehicle state, completed trips, persistent event identities, conflicts, quarantine, run history and daily profitability.',
- 'Daily JSON contains run ID, algorithm version, quality coverage and vehicle results. Its SHA-256 is stored in PostgreSQL and checked by health/retry logic.']) + [PageBreak()]
+ p('<b>Storage contracts:</b> Raw MinIO Parquet is accepted only through committed row-count and SHA-256 manifests. PostgreSQL stores live state, trips, identities, conflicts, quarantine, run history and daily profit. Published JSON carries its run, algorithm version and quality coverage; PostgreSQL stores and rechecks its SHA-256.','Callout'), PageBreak()]
 
 story += [p('4. Technology selection','H1X'), table([
  ['Component','Why selected','Constraint / rejected alternative'],
@@ -168,7 +167,8 @@ story += [p('4. Technology selection','H1X'), table([
 story += [p('5. Implementation','H1X'), p('Streaming path','H2X')] + bullets([
  'Python emits telemetry for twelve vehicles; every fourth vehicle remains parked to create an interpretable idle/cost-only case.',
  'Both consumers use from_json plus native column constraints. Unknown vehicles, malformed JSON, impossible coordinates/speed, invalid types and out-of-bounds simulated timestamps are rejected.',
- 'Kafka is capped at 2,000 offsets per trigger and serving micro-batches at 2,500 rows. Accepted serving rows are collected only inside this explicit classroom bound, then written with bulk SQL operations.',
+ 'Kafka is capped at 2,000 offsets per trigger. Spark executors bulk-stage valid partitions and PostgreSQL performs a set-based transactional merge; raw event rows and aggregate windows are not collected on the Python driver.',
+ 'Raw commits are identified by canonical Kafka partition/offset ranges, not restartable Spark batch numbers. Recreated checkpoints therefore cannot silently collide with an earlier ledger generation.',
  'Persistent event fingerprints deduplicate across batches. Same identity with different business content becomes a conflict; implicated trip revenue and live state are removed rather than arbitrarily selected.']) + [
  p('Batch path','H2X')] + bullets([
  'Only ledger-committed and checksum-verified Parquet enters reconciliation. Spark detects event/trip conflicts, aggregates completions by vehicle and calculates telemetry coverage.',
@@ -179,16 +179,16 @@ story += [p('5. Implementation','H1X'), p('Streaming path','H2X')] + bullets([
 
 story += [p('6. Observability and failure behaviour','H1X'), table([
  ['Signal','Detection','Response / meaning'],
- ['Live freshness','Accepted-event arrival age plus simulated event lag','HTTP 503 after 120 real seconds; duplicates cannot refresh health'],
+ ['Live/raw freshness','Accepted-event age plus live-to-archive event-time lag','HTTP 503 for stale ingestion or raw lag beyond 60 simulated minutes'],
  ['Batch failures','Latest run status per date and stalled-run threshold','HTTP 503; failed date retained with error'],
  ['Date completeness','Every expected date from simulation start to latest closed day','Missing historical hole makes report health degraded'],
  ['Publication','Pending state, algorithm version and JSON SHA-256','Missing/corrupt/outdated report makes health degraded and triggers restatement'],
  ['Data quality','Quarantine rows and >5% daily gate','Bad date fails; last good daily result remains'],
  ['Tracing','trace_id in source/live trip records and structured logs','Supports event walkthrough; not full distributed tracing'],
  ['Business alert','Observed idle_since against simulated latest event','API lists considerably idle vehicles']], [31*mm,67*mm,67*mm],7.2),
- p('Structured JSON logs include timestamp, stage and message plus batch/run identifiers, row counts and errors where relevant. The official Prometheus Python client exports metrics; a pinned Prometheus server evaluates three local rules and a provisioned Grafana dashboard visualises pipeline health. External notification routing is deliberately outside the local submission.'),
+ p('Structured JSON logs include timestamp, stage and message plus batch/run identifiers, row counts and errors where relevant. The official Prometheus Python client exports metrics; a pinned Prometheus server evaluates four local rules, including raw/archive divergence, and a provisioned Grafana dashboard visualises pipeline health. External notification routing is deliberately outside the local submission.'),
  p('Failure exercise','H2X'), p('Final verification stopped only the telemetry producer. Ingestion health returned HTTP 503 at a 126-second event age, then the cleanup handler restarted the producer and health recovered to HTTP 200 at 5.6 seconds. The demo runbook repeats this exercise. Because the simulation wall clock continues, an outage creates an honest historical coverage gap; the system must not fabricate events or profit.'),
- p('<b>Recovery rule:</b> PostgreSQL, Kafka, Parquet and Spark checkpoint form one logical dataset. Coordinated backups are required. Deleting one component alone is unsupported. Conflicts require audited source correction and a deliberate rebuild, not ad-hoc deletion.','Callout'), PageBreak()]
+ p('<b>Recovery rule:</b> PostgreSQL, Kafka, Parquet and Spark checkpoints form one logical dataset. Raw commits use offset fingerprints; if a raw checkpoint is recreated, retained Kafka can repair an event-time gap without reusing Spark batch IDs. Conflicts still require audited source correction rather than ad-hoc deletion.','Callout'), PageBreak()]
 
 story += [p('7. Results and business output','H1X'),
  p('The running platform exposes a consolidated business page at http://localhost:8001. It combines current reporting/active vehicles, idle ratio, hourly earnings, zone activity and a selectable daily vehicle profitability table. It also states the report run, publication state, algorithm version and quality outcome.'),
@@ -196,18 +196,18 @@ story += [p('7. Results and business output','H1X'),
  p('Figure 2. Actual local results page showing healthy ingestion, the live fleet summary and the parameterised Spark event-time zone view. The selectable daily table continues below the captured viewport.','Small'),
  p('Verified snapshots','H2X'), table([
  ['Evidence','Observed result'],
- ['Automated unit/API/archive tests','48 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
- ['Isolated Spark/PostgreSQL suite','23 named checks passed; disposable schema and temporary files'],
+ ['Automated unit/API/archive tests','54 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
+ ['Isolated Spark/PostgreSQL suite','25 named checks passed; disposable schema and isolated MinIO prefix'],
  ['Fresh volumes','Sixteen-service Compose definition; DAG imports, report, live, MinIO and monitoring checks'],
  ['Short throughput smoke test','10/100/500 target eps: all 30/300/1,500 events accepted; p95 latency 8.48/6.03/6.15 s'],
- ['Final report-integrity health','Healthy; 280 dates; zero missing, invalid, outdated, failed, stalled or pending'],
- ['Final result quality snapshot','1,568 complete vehicle-days; 1,792 incomplete-telemetry vehicle-days']], [61*mm,104*mm]),
+ ['Final report-integrity health','Healthy; 751 dates; zero missing, invalid, outdated, failed, stalled or pending'],
+ ['Final result quality snapshot','3,512 complete vehicle-days; 5,500 incomplete-telemetry vehicle-days']], [61*mm,104*mm]),
  p('The historical counts are a dated snapshot, not a performance benchmark. Incomplete days reflect real downtime in the persistent demonstration dataset. All retained dates were restated under algorithm version 4 so export digests and identity semantics were recalculated rather than inherited.','Callout'), PageBreak()]
 
 story += [p('8. Verification and reproducibility','H1X'),
  p('The verification strategy separates pure logic, API behaviour, isolated database/Spark integration, live smoke checks and a fresh-volume installation. Faults that would damage evidence are applied only to temporary directories and UUID-named schemas.'),
  table([['Area','Checks'],
- ['Replay/integrity','Cross-batch duplicate, timestamp spelling parity, conflicting fare, committed archive loss, writer fence'],
+ ['Replay/integrity','Cross-batch duplicate, offset identity, timestamp parity, conflicting fare, archive loss, writer fence'],
  ['Financial truth','Trip counts, zero-revenue parked vehicle, corrected cost, missing expense, incomplete telemetry, profit equation'],
  ['Publication','Pending state, simulated replace failure, retry, missing JSON recovery, corrupt JSON recovery, digest/run match'],
  ['Validation','Malformed JSON, unknown vehicle, future timestamp and daily cost quality gate'],
@@ -223,7 +223,7 @@ story += [p('8. Verification and reproducibility','H1X'),
 story += [p('9. Limitations, scale and security','H1X'), table([
  ['Current limitation','Production direction'],
  ['Single Kafka broker / local[2] Spark','Replicated Kafka, distributed Spark and capacity testing'],
- ['Bounded driver collection and PostgreSQL merge','Partition staging and set-based final merge after measured load'],
+ ['Single PostgreSQL staging/merge target','Partitioned staging tables or a distributed serving sink after measured load'],
  ['Small immutable MinIO Parquet files','Iceberg/Delta compaction, lifecycle policies and replicated object storage'],
  ['One Airflow task','Stage-specific tasks/sensors after operational need is demonstrated'],
  ['Two-minute watermark is a classroom policy','Tune allowed lateness from measured production arrival distributions'],
@@ -253,7 +253,7 @@ story += [p('10. Conclusion and references','H1X'),
  ['docs/CONTRIBUTION_STATEMENT.md','Individual authorship and contribution statement'],
  ['docs/FINAL_SCOPE.md','Authoritative delivered scope and deferrals'],
  ['output/evidence/clean-install.json','Machine-readable fresh-volume verification evidence'],
- ['output/evidence/performance-benchmark.json','10/100/500 eps latency and acceptance evidence']], [55*mm,110*mm]),
+ ['output/evidence/performance-benchmark.json','10/100/500 eps latency and acceptance evidence']], [65*mm,100*mm]),
  p('Contribution note. The README identifies one author. No additional group-member contributions are invented. If submitted as group work, the students must add a truthful statement based on actual contributions.','Callout')]
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
