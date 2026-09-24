@@ -1,21 +1,226 @@
-# Fleet Lambda Platform
+# Run the Fleet Lambda Platform
 
-EC8203 mini-project: live ride-hailing fleet metrics and daily reconciliation of
-trip revenue against fuel and maintenance expenses.
+This repository implements the EC8203 ride-hailing use case as a local Lambda architecture. It combines live fleet telemetry with daily expense files to answer two questions: what is happening across the fleet now, and which vehicles are profitable after fuel and maintenance costs?
 
-**Status: submission candidate.** The delivered scope and deliberate deferrals are
-recorded in [FINAL_SCOPE.md](docs/FINAL_SCOPE.md). PROJECT_PLAN.md is the original
-proposal and is not a claim that every optional component was implemented.
+The project is designed for a localhost classroom demonstration. It is not configured for public or production deployment.
 
-Batch aggregation uses Spark; missing telemetry is explicitly incomplete,
-committed archives are verified by Kafka offset identity, and streaming executors
-bulk-stage partitions for a set-based transactional PostgreSQL merge.
+## What the platform implements
 
-### Upgrade an existing dataset
+The delivered system includes:
 
-Fresh installations run all six ordered SQL migrations automatically. Existing volumes need
-the additive migration below before starting the upgraded writer. Back up the fleet
-database first; do not delete checkpoints, archives or volumes.
+- **Streaming ingestion**: a Python producer sends telemetry for 12 vehicles to a three-partition Apache Kafka topic
+- **Speed layer**: Spark Structured Streaming validates events, applies a two-minute watermark, updates live vehicle state, raises idle alerts, and writes one-minute zone windows
+- **Raw layer**: an independent Spark consumer writes partitioned Parquet to MinIO and commits row-count and SHA-256 manifests
+- **Daily source**: a Python producer uploads one expense CSV per five-minute simulated day
+- **Batch layer**: Apache Airflow invokes PySpark reconciliation over verified raw archives and the latest valid expense file
+- **Serving layer**: PostgreSQL stores live state, window metrics, alerts, daily profitability, publication metadata, quarantine rows, and run history
+- **Output layer**: FastAPI serves a business page and query endpoints; reconciliation publishes JSON, CSV, HTML, and Parquet reports
+- **Observability**: structured JSON logs, Prometheus metrics and rules, Grafana dashboards, health endpoints, and Airflow data-quality checks
+
+One simulated day equals 300 real seconds. The clock begins at `2026-03-01T00:00:00Z`. Money is stored as integer LKR cents.
+
+## Understand the architecture
+
+The speed and batch paths serve different consistency needs:
+
+```text
+Python telemetry -> Kafka -> Spark speed consumer -> PostgreSQL live tables
+                         |
+                         +-> Spark raw consumer -> MinIO Parquet and manifests
+                                                     |
+Python expense CSV -> Airflow -> Spark batch <--------+
+                                  |
+                                  +-> PostgreSQL daily tables
+                                  +-> versioned report files
+
+PostgreSQL -> FastAPI -> business page and API
+FastAPI -> Prometheus -> Grafana
+```
+
+The speed path reports indicative operational metrics. The batch path recomputes authoritative daily results from committed archives. This separation supports corrected expense files without changing the original telemetry archive.
+
+Read [the final scope](docs/FINAL_SCOPE.md) for the delivered architecture and deliberate deferrals. `PROJECT_PLAN.md` records the original proposal and traceability history.
+
+## Meet the prerequisites
+
+Install the following software before starting:
+
+- Docker Desktop with Linux containers
+- Docker Compose v2
+- PowerShell 7 for the commands below
+- Python 3.11 for host-side tests and verification scripts
+- At least 8 GB of memory available to Docker
+- Internet access for the first image build
+
+The first build downloads Kafka, Spark, Airflow, MinIO, PostgreSQL, Prometheus, Grafana, Java, and Python dependencies.
+
+## Start the platform
+
+Run these commands from the repository root:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose up --build -d
+docker compose ps -a
+```
+
+Do not replace an existing `.env`. Compose also works with the documented defaults when `.env` is absent.
+
+Initialization containers exit after creating databases, migrations, buckets, and Kafka topics. Their successful exit is expected. The API, Airflow, Kafka, MinIO, PostgreSQL, producers, Prometheus, Grafana, and two Spark consumers remain running.
+
+Follow the main processing logs with:
+
+```powershell
+docker compose logs -f streaming-raw streaming-speed producer-stream airflow-scheduler
+```
+
+## Open the interfaces
+
+Use these localhost endpoints after the containers start:
+
+- [Business results page](http://localhost:8001/)
+- [FastAPI documentation](http://localhost:8001/docs)
+- [Live fleet metrics](http://localhost:8001/metrics/fleet)
+- [Fifteen-minute zone metrics](http://localhost:8001/metrics/zones?window=15)
+- [Active idle alerts](http://localhost:8001/alerts/active?idle_minutes=15)
+- [Available daily reports](http://localhost:8001/reports/daily)
+- [Example daily profitability report](http://localhost:8001/reports/daily/2026-03-01)
+- [Pipeline health](http://localhost:8001/health/pipeline)
+- [Report health](http://localhost:8001/health/reports)
+- [Prometheus metrics](http://localhost:8001/metrics)
+- [Airflow](http://localhost:8080), using `admin` and `fleet_demo`
+- [MinIO console](http://localhost:9001), using `minioadmin` and `minioadmin`
+- [Prometheus](http://localhost:9090)
+- [Grafana](http://localhost:3000), using `admin` and `fleet_demo`
+
+The credentials support a localhost demonstration only. All published ports bind to `127.0.0.1`. Kafka and PostgreSQL are not exposed to the host.
+
+## Wait for the first daily report
+
+The first expense file appears after five real minutes. Airflow checks for closed simulated dates once per minute. Spark then reads the relevant archive partitions and publishes the daily result.
+
+Check report health before opening a daily report:
+
+```powershell
+Invoke-RestMethod http://localhost:8001/health/reports
+Invoke-RestMethod http://localhost:8001/reports/daily/2026-03-01
+```
+
+Report health may return `processing` while Spark reconciles one newly closed date. It returns HTTP 503 when reports fall further behind or when publication, data quality, version, archive-lag, or run-status checks fail.
+
+Restate one date manually with:
+
+```powershell
+docker compose exec api python -m batch.reconcile --date 2026-03-01
+```
+
+Identical inputs produce identical values. A database advisory lock prevents overlapping reconciliation for the same date.
+
+## Verify the implementation
+
+Run the host suite first:
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python -m pytest tests -q -rs
+docker compose config --quiet
+```
+
+The verified host result is 54 passed tests, 17 passed subtests, and one dependency-gated Spark parity skip.
+
+Run the skipped parity test inside the application image, where PySpark is installed:
+
+```powershell
+docker compose run --rm --no-deps api python -m unittest tests.test_completion.SparkPythonParityTests -v
+```
+
+Run the isolated PostgreSQL, Spark, Parquet, publication, and conflict suite with:
+
+```powershell
+docker compose run --rm --no-deps api python -m scripts.verify_reconciliation
+```
+
+The script creates a UUID-named PostgreSQL schema and an isolated MinIO verification prefix. It removes both after the run and does not modify live serving tables or archives. The verified result contains 25 named checks.
+
+Validate the running platform with:
+
+```powershell
+python -m scripts.verify_running --wait-seconds 480
+```
+
+If Windows cannot reach the forwarded port, run the same application check inside Docker:
+
+```powershell
+docker compose exec -T api python -m scripts.verify_running --base-url http://127.0.0.1:8000 --wait-seconds 480
+```
+
+The container check validates the application path. It does not prove that Windows or a host browser can reach the forwarded port.
+
+## Verify a clean installation
+
+The clean-install verifier starts a separate Compose project with empty, uniquely named volumes and alternate localhost ports. It verifies initialization, ingestion, MinIO, APIs, monitoring, Airflow imports, and a daily report. It then removes only its disposable containers and volumes.
+
+Run it when ports `18001`, `18080`, `19000`, `19001`, `19090`, and `13000` are free:
+
+```powershell
+python -m scripts.verify_clean_install
+```
+
+The saved evidence validates fresh volumes on the same Docker host. It does not claim an uncached installation on a second computer.
+
+## Demonstrate failure detection
+
+Run the automated no-data exercise while pipeline health is green:
+
+```powershell
+python -m scripts.verify_no_data
+```
+
+The script stops only the telemetry producer, waits for the 120-second threshold, confirms HTTP 503, restarts the producer in a cleanup handler, and confirms recovery to HTTP 200.
+
+If the terminal is terminated before cleanup, restart ingestion with:
+
+```powershell
+docker compose start producer-stream
+```
+
+Use [the demo runbook](docs/DEMO_RUNBOOK.md) for the complete eight-minute presentation sequence.
+
+## Interpret the business results
+
+Apply these rules when reading live and daily outputs:
+
+- **Fare recognition**: revenue counts only records where `trip_completed` is true, once per `trip_id`
+- **Trip date**: a trip belongs to its UTC completion date
+- **Missing costs**: `missing_expenses` produces null profit, margin, and loss classification
+- **Missing telemetry**: `incomplete_telemetry` keeps profitability unknown instead of treating missing events as zero revenue
+- **Conflicts**: `conflicting_events` invalidates affected profitability until the source history is rebuilt through an audited correction
+- **Expense-only vehicles**: registered vehicles remain visible with zero observed revenue and their submitted costs
+- **Live activity**: active means `enroute` or `on_trip`; reporting vehicles were observed within 30 simulated minutes of the newest accepted event
+- **Data quality**: more than 5% rejected expense rows fails that date and preserves the last good publication
+- **Quarantine**: invalid stream records enter MinIO quarantine, Kafka dead letters, and `stream_dead_letters`; invalid expense rows enter `dq_quarantine`
+
+Check `/health/pipeline` before interpreting live values. A running interface can still display stale business data after an ingestion failure.
+
+## Preserve the dataset contract
+
+Named volumes persist PostgreSQL, Kafka, MinIO objects, Spark checkpoints, Airflow logs, Prometheus data, and Grafana state.
+
+```powershell
+docker compose down
+docker compose up -d
+```
+
+`docker compose down` removes containers and networks but preserves named volumes. Do not delete only a checkpoint, archive prefix, Kafka volume, or database volume. These components form one logical dataset.
+
+Keep the fleet size, simulation start, tick interval, and clock scale unchanged for the lifetime of an existing dataset. Downtime advances the simulated clock and can create honest telemetry gaps.
+
+## Upgrade an existing dataset
+
+Fresh installations apply all six ordered fleet migrations automatically. Existing persistent volumes require the additive migration before upgraded writers start.
+
+Back up the database, then run:
 
 ```powershell
 docker compose build api airflow-scheduler
@@ -24,268 +229,88 @@ docker compose run --rm --no-deps api python -m scripts.migrate_integrity
 docker compose up -d --no-deps streaming-raw streaming-speed producer-stream producer-batch api airflow-scheduler airflow-webserver
 ```
 
-The migration checks historical archive counts and baselines SHA-256 manifests and
-event identities. Baseline hashes detect future changes, not alterations made before
-the migration. If a file/count is missing, migration fails instead of inventing data.
-Only restart upgraded writers after it succeeds.
+The migration validates historical archive counts and creates baseline manifests and event identities. It fails when required evidence is missing instead of creating replacement data.
 
-If a hard shutdown left a legacy Parquet file truncated but the corresponding Kafka
-offset range is retained, recover only the named batches with
-`python -m scripts.recover_legacy_archive <batch-id> ...`. The recovery verifies
-committed row counts and persistent event fingerprints before replacing a manifest.
+## Recover archive data cautiously
 
-If a checkpoint was recreated and a live/raw event-time gap is reported, stop only
-`streaming-raw` and run `python -m scripts.repair_archive_gap --include-boundary`.
-The command snapshots retained Kafka offsets, verifies serving identities and commits
-a checksummed recovery batch. It fails without modifying the ledger when Kafka no
-longer contains the missing interval.
+Use recovery commands only after identifying an exact damaged batch or event-time gap. Stop `streaming-raw` before changing archive state.
 
-## Architecture
-
-```text
-Python telemetry -> Kafka -> Spark speed consumer -> PostgreSQL live/window tables
-                         |
-                         +-> Spark raw consumer -> MinIO Parquet + manifests
-                                                     |
-Python daily expense CSV -> Airflow -> Spark batch <-+
-                                      |
-                                      +-> PostgreSQL daily profitability
-                                      +-> JSON, CSV, HTML and Parquet reports
-
-PostgreSQL -> FastAPI: fleet metrics, daily reports, health and metrics export
-```
-
-The live path serves indicative operations metrics. The separate batch path
-recomputes daily financial results from archived events and the expense feed.
-Lambda supports corrected cost files while retaining original trip events.
-Initially, one Spark query was used, but the architecture has been fully upgraded to separate raw/speed consumers using MinIO for scalable object storage.
-
-## Start on Windows PowerShell
-
-Requirements: Docker Desktop running Linux containers, Docker Compose v2, and
-internet for the first image build. Budget roughly 8 GB for Docker and measure
-actual usage on your laptop. Containers use Python 3.11 and Java 17.
-
-From the repository directory:
+For a legacy batch with a retained local Parquet copy, run:
 
 ```powershell
-Copy-Item .env.example .env
-docker compose up --build -d
-docker compose ps -a
-docker compose logs -f streaming-raw streaming-speed producer-stream airflow-scheduler
+docker compose stop streaming-raw
+docker compose run --rm --no-deps api python -m scripts.restore_archive_batch 1234567890123
+docker compose start streaming-raw
 ```
 
-Do not overwrite an existing `.env`; defaults also work without copying the file.
-The first build downloads large dependencies. Initialization services exit after
-successful setup; this is expected. Other services should remain running.
+The restoration script prefers a byte-for-byte legacy copy whose digest matches the committed manifest. Its Kafka fallback is not approved for modern batches because raw archive IDs and speed-stream batch IDs use different namespaces.
 
-- API documentation: <http://localhost:8001/docs>
-- Business results page: <http://localhost:8001/>
-- Live fleet metrics: <http://localhost:8001/metrics/fleet>
-- Zone metrics: <http://localhost:8001/metrics/zones?window=15> (1-1440 simulated minutes)
-- Active alerts: <http://localhost:8001/alerts/active?idle_minutes=15>
-- Time-of-day earnings: <http://localhost:8001/metrics/time-of-day?report_date=2026-03-01>
-- Pipeline health: <http://localhost:8001/health/pipeline>
-- Batch/report health: <http://localhost:8001/health/reports>
-- Metrics export: <http://localhost:8001/metrics>
-- Available report dates: <http://localhost:8001/reports/daily>
-- Daily profitability: <http://localhost:8001/reports/daily/2026-03-01>
-- Confirmed loss-making vehicles: <http://localhost:8001/reports/daily/2026-03-01/unprofitable>
-- Airflow: <http://localhost:8080> (`admin` / `fleet_demo` by default).
-- MinIO console: <http://localhost:9001> (`minioadmin` / `minioadmin` by default).
-- Prometheus: <http://localhost:9090>
-- Grafana: <http://localhost:3000> (`admin` / `fleet_demo` by default).
-
-Credentials are for a local classroom demo. Ports bind only to localhost; Kafka
-and PostgreSQL are internal. If changing passwords in `.env`, use URL-safe
-characters because connection URLs are assembled from those values.
-
-The simulation starts when a producer first connects. After five real minutes,
-the first expense file is published. Airflow polls once per real minute and waits
-until Spark has committed data beyond the simulated day boundary. Allow startup
-and processing time before checking the first report:
+For a detected live-to-raw event-time gap, run:
 
 ```powershell
-Invoke-RestMethod http://localhost:8001/reports/daily/2026-03-01
-docker compose exec api python -m batch.reconcile --date 2026-03-01
+docker compose stop streaming-raw
+docker compose run --rm --no-deps api python -m scripts.repair_archive_gap --include-boundary
+docker compose start streaming-raw
 ```
 
-The second command restates that date. Identical inputs should give identical
-rows and values. A database lock prevents overlapping runs for the same date.
+The gap repair snapshots retained Kafka offsets and checks serving identities before committing a recovery batch. Current raw commits do not yet enforce per-partition offset continuity, so compare source offset ranges before accepting a repair.
 
-## Demonstrate the no-data health rule
+## Run performance measurements
 
-```powershell
-docker compose stop producer-stream
-# Wait 120 real seconds after Spark finishes its remaining input.
-Invoke-WebRequest http://localhost:8001/health/pipeline
-docker compose start producer-stream
-```
-
-Pipeline health returns HTTP 503 for no recent valid ingestion or database failure.
-`/health` checks process liveness only. Prometheus evaluates local alert rules;
-external notification routing remains a production deployment concern.
-
-After startup, run a read-only check of live ingestion, daily output and profit
-arithmetic (waits up to eight minutes for the first report):
-
-```powershell
-python -m scripts.verify_running --wait-seconds 480
-```
-
-If Windows port forwarding is unavailable, the same check can run inside Docker:
-
-```powershell
-docker compose exec -T api python -m scripts.verify_running --base-url http://127.0.0.1:8000 --wait-seconds 480
-```
-
-This verifies the application, not Windows/browser access. The latter requires
-the host-side check to pass separately.
-
-For real PostgreSQL/Parquet reconciliation checks, including corrected expenses,
-duplicate trips, quarantine and preservation of the last good report:
-
-```powershell
-docker compose build api
-docker compose run --rm --no-deps api python -m scripts.verify_reconciliation
-```
-
-This creates a uniquely named temporary database schema and removes it on exit;
-live tables, expense files and reports are not modified. It needs the demo database
-user's schema-creation permission.
-
-The following optional fault test briefly stops the live telemetry producer,
-checks HTTP 503 after the configured no-data threshold, restarts the producer in
-a cleanup handler, and checks recovery to HTTP 200:
-
-```powershell
-python -m scripts.verify_no_data
-```
-
-Run it while the pipeline is healthy. If the terminal is forcibly terminated,
-restore ingestion with `docker compose start producer-stream`.
-
-## Tests and local sample
-
-```powershell
-python -m unittest discover -s tests -v
-python -m scripts.demo_local
-docker compose config --quiet
-```
-
-Business-rule tests and the sample reconciliation use Python's standard library.
-API/archive tests run when dependencies exist and otherwise report a skip. The
-sample is explicitly a business-logic demo, not a Kafka/Spark/Airflow integration
-test. For all dependencies, use a Python 3.11 virtual environment:
-
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-## Data and accounting rules
-
-- Events, database tables and reports use integer **LKR cents**. Divide by 100 to
-  display LKR. Expense CSVs accept decimal LKR values.
-- A fare is counted only when `trip_completed` is true, once per `trip_id`.
-  Repeated GPS events are not trips. Conflicting completion records fail processing.
-- A trip belongs to its UTC completion date, including trips crossing midnight.
-- Missing expense records produce `missing_expenses` and null profitability.
-  Expense-only vehicles have zero revenue and retain their costs.
-- Missing or partial telemetry produces `incomplete_telemetry`; conflicting events
-  produce `conflicting_events`. Profit, margin and loss classification are unknown
-  in both cases. Coverage checks the registered fleet's configured simulated cadence.
-- Daily API responses include a publication run ID, export status and per-vehicle
-  coverage. A pending export explicitly indicates that the file has not caught up
-  with the database version. Legacy reports without metadata remain unverified.
-- Every fourth vehicle stays parked, providing an idle-alert example and a
-  loss-making vehicle with costs but no completed trips.
-- Active means reporting in `enroute` or `on_trip`. Idle ratio is idle/reporting
-  vehicles. Reporting vehicles were observed within 30 simulated minutes of the
-  newest processed event. Live trip counts and earnings cover the last simulated
-  hour. Check pipeline health before interpreting potentially stale values.
-- The persisted clock starts at `2026-03-01T00:00:00Z`. One simulated day equals
-  300 real seconds. Business times use simulated UTC; health and scheduling use
-  real time. A two-real-second tick advances 9.6 simulated minutes by default.
-- Keep clock scale, event interval and fleet size stable for a dataset's lifetime.
-  Downtime advances the clock and can leave telemetry gaps.
-- Invalid stream records are written to the MinIO `quarantine/` prefix, mirrored
-  to the Kafka dead-letter topic and recorded in `stream_dead_letters`. Bad CSV
-  rows go to `dq_quarantine`; more than 5% rejected rows stops daily publication.
-
-## Persistence and recovery
-
-Named volumes hold PostgreSQL, Kafka, MinIO Parquet, checkpoints, monitoring data
-and Airflow logs.
-`docker compose down` stops/removes containers without deleting this data.
-`docker compose up -d` resumes the stack.
-
-The raw Spark consumer writes Parquet before publishing a manifest-backed commit
-ledger entry. The independent speed consumer transactionally publishes live state,
-completed trips and window metrics. Retries rewrite only an uncommitted raw batch.
-Reconciliation reads ledger-committed archives. Never delete only a checkpoint,
-archive or database: these form one dataset.
-
-Airflow checks ready dates every minute using a committed input snapshot, newest
-first. Unchanged verified inputs skip Spark recomputation; changed/late inputs
-restate their date. A failed date does not prevent other dates from processing,
-and the overall task fails after collecting per-date errors. Missing expected
-expense files are errors. A failed quality/archive check preserves the last good
-report. Financial completeness does not imply that no future correction can arrive.
-Each run recomputes at most five changed dates by default, deferring remaining
-historical backfills so newly closed days get another scheduling opportunity.
-Set `MAX_CHANGED_DATES_PER_RUN` to tune that budget; unchanged checks do not consume it.
-
-Generated reports live in the shared volume. To copy one to the workspace:
-
-```powershell
-New-Item -ItemType Directory -Force reports
-docker compose cp api:/data/reports/profitability_2026-03-01.json reports/
-```
-
-## Implementation limits
-
-This version uses one Kafka broker and single-node Spark. Streaming records are
-written by executor partition into an unlogged staging table, then merged with
-set-based SQL inside one transaction; raw events and window rows are not collected
-on the Python driver. Daily trip state stays in Spark,
-with only fleet-size summaries collected. It does not claim end-to-end exactly-once delivery. Simulation restarts may
-skip ticks. Idle detection follows observed state changes and does not reconstruct
-late historical sessions. Database and JSON publication are separate operations;
-a pending publication status exposes export failure until Airflow retries it.
-Raw commits are idempotent by Kafka partition/offset fingerprint rather than the
-restartable Spark batch number. Both health endpoints expose and enforce the maximum
-permitted live/raw event-time lag.
-Published JSON is versioned and SHA-256 verified; missing or corrupted output is
-regenerated. Use [DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md) for the prepared live demo.
-Use [VIVA_QA.md](docs/VIVA_QA.md) for ten likely oral-exam questions and
-[CONTRIBUTION_STATEMENT.md](docs/CONTRIBUTION_STATEMENT.md) for the individual
-authorship statement.
-
-Run performance measurements only on a disposable Compose project because benchmark
-events enter the immutable archive:
+Benchmark only a disposable dataset because benchmark events enter the immutable archive:
 
 ```powershell
 docker compose exec -T api python -m scripts.benchmark --eps 100 --duration 10 --disposable-dataset
 ```
 
-The final short 10/100/500 eps smoke results are recorded in
-`output/evidence/performance-benchmark.json`; all published events were accepted.
-They include the five-second stream trigger and are not a sustained capacity claim.
-The GitHub Actions workflow also builds the pinned images from a clean Ubuntu
-checkout and runs the fresh-volume verification; treat that cross-machine claim as
-verified only after the repository's `clean-compose` job is green.
+The saved 10, 100, and 500 events-per-second smoke results are in `output/evidence/performance-benchmark.json`. Every published event was accepted in those short runs. The measurements include the five-second streaming trigger and do not represent sustained capacity.
 
-## Technical references
+## Review current limitations
 
-- [Kafka Docker](https://kafka.apache.org/39/getting-started/docker/)
-- [Spark Kafka connector](https://spark.apache.org/docs/3.5.6/structured-streaming-kafka-integration.html)
-- [Spark foreachBatch](https://spark.apache.org/docs/3.5.6/structured-streaming-programming-guide.html)
-- [Airflow container setup](https://airflow.apache.org/docs/apache-airflow/2.10.5/howto/docker-compose/index.html)
-- [Airflow database requirements](https://airflow.apache.org/docs/apache-airflow/2.10.5/howto/set-up-database.html)
-- Architecture decision records: [docs/adr/](docs/adr/)
+The repository intentionally defers production infrastructure:
+
+- Single Kafka broker, local Spark workers, single-node MinIO, and one PostgreSQL instance
+- Local credentials, no Transport Layer Security (TLS), no API authentication, and no external alert routing
+- Shared PostgreSQL owner credentials across application services
+- MinIO root credentials used by application services
+- Fixed local Airflow signing key and predictable demonstration password
+- No schema registry, distributed tracing backend, replicated storage, or disaster-recovery automation
+
+The following correctness limitations remain visible and documented:
+
+- Modern Kafka-based archive restoration needs source-offset reconstruction instead of speed-stream batch identities
+- Raw commits record Kafka ranges but do not yet reject an internal per-partition offset discontinuity
+- A conflict known only through the database ledger can invalidate vehicle profit without retracting the corresponding daily zone aggregate
+- SHA-256 publication health protects JSON reports; CSV, HTML, and Parquet exports do not have independent stored digests
+
+The platform does not claim end-to-end exactly-once delivery. Kafka checkpoints, persistent identities, database transactions, archive manifests, and deterministic restatement provide replay safety within the documented single-writer dataset contract.
+
+## Find the submission material
+
+Use these files for assessment and presentation:
+
+- [Final report PDF](output/pdf/fleet-lambda-platform-report.pdf)
+- [Submission ZIP](output/fleet-lambda-platform-submission.zip)
+- [Implementation status](docs/IMPLEMENTATION_STATUS.md)
+- [Final delivered scope](docs/FINAL_SCOPE.md)
+- [Demo runbook](docs/DEMO_RUNBOOK.md)
+- [Viva questions and answers](docs/VIVA_QA.md)
+- [Individual contribution statement](docs/CONTRIBUTION_STATEMENT.md)
+- [Architecture decision records](docs/adr/)
+- [Clean-install evidence](output/evidence/clean-install.json)
+- [Final verification evidence](output/evidence/final-verification.json)
+- [Performance evidence](output/evidence/performance-benchmark.json)
+
+## Stop the platform
+
+Preserve data while stopping containers:
+
+```powershell
+docker compose down
+```
+
+Deleting named volumes permanently removes the demonstration dataset. Do not add `--volumes` unless you intend to rebuild from empty storage.
 
 ## Author
 
-Udara Subodhitha Senevirathna, BSc Computer Engineering, University of Ruhuna.
+Udara Subodhitha Senevirathna, BSc Computer Engineering, University of Ruhuna
