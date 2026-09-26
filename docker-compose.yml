@@ -128,7 +128,9 @@ services:
     command: [python, -c, "import os; os.chown('/data',50000,0); os.chmod('/data',0o770)"]
 
   minio:
-    image: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    # Digest-pinned Chainguard build; the dev variant supplies wget for the
+    # container health check while still running as its non-root default user.
+    image: cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?generate .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?generate .env}
@@ -139,14 +141,15 @@ services:
       - '127.0.0.1:${MINIO_API_PORT:-9000}:9000'
       - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
   minio-mc:
-    image: quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    # The dev client supplies /bin/sh for this one-shot initialization script.
+    image: cgr.dev/chainguard/minio-client@sha256:f0dd93b48af1f8a641edcd3c64661c8dbe05189bd2ef2f8cea216eb18af10bf8
     depends_on:
       minio:
         condition: service_healthy
