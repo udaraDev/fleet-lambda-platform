@@ -91,8 +91,8 @@ py -3.11 -m venv .venv
 docker compose config --quiet
 ```
 
-The last recorded host run completed 59 tests with one expected skip: the
-Spark/Python parity test needs PySpark in the application image. Run that test
+The last recorded host run completed 66 tests: 65 passed and one expected skip.
+The Spark/Python parity test needs PySpark in the application image. Run that test
 and the isolated reconciliation checks there:
 
 ```powershell

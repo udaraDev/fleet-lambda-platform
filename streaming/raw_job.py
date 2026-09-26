@@ -61,6 +61,29 @@ def continuity_errors(offsets, committed):
     }
 
 
+def replay_plan(offsets, committed):
+    """Classify replayed prefixes separately from genuine forward gaps.
+
+    Spark may commit the database/archive transaction and then be interrupted
+    before its checkpoint metadata is durable. On restart that committed
+    prefix is replayed. It is safe to trim offsets below the database high
+    water mark; starting above the high water mark remains a fatal gap.
+    """
+    thresholds = {}
+    gaps = {}
+    for partition, details in offsets["partitions"].items():
+        partition = int(partition)
+        if partition not in committed:
+            continue
+        expected = int(committed[partition])
+        actual = int(details["start"])
+        if actual < expected:
+            thresholds[partition] = expected
+        elif actual > expected:
+            gaps[partition] = {"expected": expected, "actual": actual}
+    return thresholds, gaps
+
+
 def assert_offset_continuity(cur, offsets):
     partitions = sorted(int(value) for value in offsets["partitions"])
     cur.execute("""SELECT partition,next_offset FROM archive_partition_offsets
@@ -98,6 +121,36 @@ def _process_batch(frame, batch_id):
         if sum(item["rows"] for item in offsets["partitions"].values()) != count:
             raise RuntimeError("Kafka offset-range row count does not match the micro-batch")
 
+        partitions = sorted(int(value) for value in offsets["partitions"])
+        with connection() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT partition,next_offset FROM archive_partition_offsets
+                WHERE topic=%s AND partition=ANY(%s) FOR UPDATE""",
+                (offsets["topic"], partitions))
+            thresholds, gaps = replay_plan(offsets, dict(cur.fetchall()))
+        if gaps:
+            raise RuntimeError(f"Kafka archive offset discontinuity: {json.dumps(gaps, sort_keys=True)}")
+        if thresholds:
+            predicate = None
+            for partition, next_offset in thresholds.items():
+                keep = ((F.col("partition") != F.lit(partition)) |
+                        (F.col("offset") >= F.lit(next_offset)))
+                predicate = keep if predicate is None else predicate & keep
+            cached.unpersist()
+            cached = frame.filter(predicate).persist()
+            count = cached.count()
+            log("streaming-raw", "committed_replay_prefix_skipped",
+                source_batch_id=batch_id, thresholds=thresholds, rows_remaining=count)
+            if count == 0:
+                return
+            partition_rows = cached.groupBy("partition").agg(
+                F.min("offset").alias("start_offset"),
+                (F.max("offset") + F.lit(1)).alias("end_offset"),
+                F.count("*").alias("rows"),
+            ).collect()
+            offsets, source_fingerprint = source_identity(partition_rows)
+            if sum(item["rows"] for item in offsets["partitions"].values()) != count:
+                raise RuntimeError("Trimmed Kafka range row count does not match the micro-batch")
+
         with connection() as conn, conn.cursor() as cur:
             cur.execute("""SELECT batch_id,rows_in,archive_manifest
                 FROM pipeline_batches WHERE source_fingerprint=%s""", (source_fingerprint,))
@@ -117,7 +170,7 @@ def _process_batch(frame, batch_id):
         upper = simulated_time(_STARTED_AT, datetime.now(timezone.utc), SIM_DAY_SECONDS) + timedelta(
             seconds=2 * EVENT_INTERVAL_SECONDS * 86400 / SIM_DAY_SECONDS)
         
-        frame = frame.withColumn("error", F.when(F.col("error").isNotNull(), F.col("error")).when(
+        frame = cached.withColumn("error", F.when(F.col("error").isNotNull(), F.col("error")).when(
             (F.try_to_timestamp("event.event_ts") < F.lit(SIM_START)) |
             (F.try_to_timestamp("event.event_ts") > F.lit(upper)), F.lit("outside_simulation_time")))
             

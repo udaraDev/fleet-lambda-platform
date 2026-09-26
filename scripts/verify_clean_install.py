@@ -14,6 +14,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def require_pipeline_verification(output):
+    """Return verified JSON output or fail closed on missing/invalid evidence."""
+    start = output.find('{')
+    if start < 0:
+        raise AssertionError("Pipeline verification returned no valid JSON")
+    try:
+        result, _ = json.JSONDecoder().raw_decode(output[start:])
+    except json.JSONDecodeError as exc:
+        raise AssertionError("Pipeline verification returned no valid JSON") from exc
+    if result.get('result') != 'passed':
+        raise AssertionError(f"Pipeline verification did not pass: {result}")
+    return result
+
+
 def main():
     name = 'fleet-clean-' + uuid.uuid4().hex[:8]
     env = dict(
@@ -38,12 +52,14 @@ def main():
                                        env=env, text=True, stderr=subprocess.STDOUT, timeout=900)
     try:
         result['startup'] = compose('up', '-d', '--no-build')
-        # Run the HTTP verification inside the API container. This is reliable
-        # even on Windows installations where WSL localhost forwarding is off.
+        # Run the HTTP verification from a disposable tools container on the
+        # project network. ``compose exec`` can return an empty success result
+        # when the target container is restarted under Docker Desktop load.
         result['pipeline_verification'] = compose(
-            'exec', '-T', 'api', 'python', '-m', 'scripts.verify_running',
-            '--base-url', 'http://127.0.0.1:8000', '--wait-seconds', '720',
+            'run', '--rm', '--no-deps', 'tools', 'python', '-m', 'scripts.verify_running',
+            '--base-url', 'http://api:8000', '--wait-seconds', '720',
         )
+        require_pipeline_verification(result['pipeline_verification'])
         result['dag_imports'] = compose('exec', '-T', 'airflow-scheduler', 'airflow', 'dags', 'list-import-errors')
         if 'No data found' not in result['dag_imports']:
             raise AssertionError(result['dag_imports'])

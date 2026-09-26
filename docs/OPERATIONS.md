@@ -20,6 +20,26 @@ volume: the components must remain consistent. Keep the fleet size, simulation
 start, tick interval, and clock scale unchanged for an existing dataset.
 Downtime advances the simulated clock and can create genuine telemetry gaps.
 
+The MinIO startup includes an idempotent ownership migration for volumes made
+by the former image UID. It changes ownership only inside the `minio-data`
+volume before the non-root server starts.
+
+If an interrupted Docker shutdown leaves zero-byte Spark metadata at the end of
+a checkpoint log, stop both current streaming workers, inspect the proposed
+repair, and then apply it:
+
+```powershell
+docker compose stop streaming-raw streaming-speed
+docker compose run --rm --no-deps tools python -m scripts.repair_spark_checkpoints
+docker compose run --rm --no-deps tools python -m scripts.repair_spark_checkpoints --apply
+docker compose up -d streaming-raw streaming-speed
+```
+
+The command refuses internal history corruption and moves only a contiguous
+invalid tail to `/data/checkpoints/.repair-backup/<UTC timestamp>`; it does not
+delete it. Afterward, verify both health endpoints. Do not use this procedure to
+paper over an archive/database mismatch.
+
 ## Inspect a running system
 
 ```powershell

@@ -127,10 +127,31 @@ services:
       - fleet-data:/data
     command: [python, -c, "import os; os.chown('/data',50000,0); os.chmod('/data',0o770)"]
 
+  minio-data-init:
+    # MinIO previously ran under a different UID. Repair ownership before every
+    # start so existing named volumes remain usable after the non-root image
+    # migration; new empty volumes are handled by the same idempotent step.
+    image: python:3.11-slim-bookworm
+    user: '0:0'
+    volumes:
+      - minio-data:/data
+    command:
+      - python
+      - -c
+      - |
+        import os
+        for root, dirs, files in os.walk('/data'):
+            os.chown(root, 65532, 65532)
+            for name in dirs + files:
+                os.chown(os.path.join(root, name), 65532, 65532)
+
   minio:
     # Digest-pinned Chainguard build; the dev variant supplies wget for the
     # container health check while still running as its non-root default user.
     image: cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    depends_on:
+      minio-data-init:
+        condition: service_completed_successfully
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?generate .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?generate .env}

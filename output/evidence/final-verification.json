@@ -1,17 +1,17 @@
 {
-  "review_date": "2026-09-24",
-  "unit_api_archive_tests": 59,
+  "review_date": "2026-09-26",
+  "unit_api_archive_tests": 65,
   "dependency_gated_host_skips": 1,
   "unittest_subtests": 17,
   "spark_python_parity": true,
-  "isolated_spark_postgresql_checks": 27,
+  "isolated_spark_postgresql_checks": 26,
   "clean_install": {
     "passed": true,
     "scope": "fresh named volumes on the same Docker host using built images; disposable volumes removed",
     "dag_import_errors": 0,
     "reported_vehicles": 12,
     "reported_zones": 3,
-    "report_date": "2026-03-02"
+    "report_date": "2026-03-01"
   },
   "performance_benchmark": {
     "duration_seconds_per_level": 3,

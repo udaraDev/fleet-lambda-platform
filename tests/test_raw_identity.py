@@ -1,6 +1,6 @@
 import unittest
 
-from streaming.raw_job import continuity_errors, source_identity
+from streaming.raw_job import continuity_errors, replay_plan, source_identity
 from streaming.staged_sink import dead_letter_partition
 from scripts.restore_archive_batch import source_ranges
 
@@ -42,6 +42,16 @@ class RawArchiveIdentityTests(unittest.TestCase):
             0: {"expected": 13, "actual": 15},
             2: {"expected": 24, "actual": 22},
         })
+
+    def test_replay_plan_trims_committed_prefix_and_rejects_gap(self):
+        offsets, _ = source_identity([
+            {"partition": 0, "start_offset": 10, "end_offset": 20, "rows": 10},
+            {"partition": 1, "start_offset": 25, "end_offset": 30, "rows": 5},
+            {"partition": 2, "start_offset": 40, "end_offset": 45, "rows": 5},
+        ])
+        thresholds, gaps = replay_plan(offsets, {0: 15, 1: 20, 2: 40})
+        self.assertEqual(thresholds, {0: 15})
+        self.assertEqual(gaps, {1: {"expected": 20, "actual": 25}})
 
     def test_restore_uses_raw_source_offset_ranges(self):
         batch = {"rows_in": 3, "source_offsets": {
