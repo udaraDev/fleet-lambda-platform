@@ -14,20 +14,28 @@ def session():
     if _session is None:
         from pyspark.sql import SparkSession
         from common.settings import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
-        _session = (SparkSession.builder.master("local[2]").appName("fleet-daily-reconciliation")
-                    .config("spark.sql.session.timeZone", "UTC")
-                    .config("spark.sql.ansi.enabled", "true")
-                    .config("spark.sql.shuffle.partitions", "2")
-                    .config("spark.ui.enabled", "false")
-                    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
-                    .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
-                    .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
-                    .config("spark.hadoop.fs.s3a.path.style.access", "true")
-                    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-                    .config("spark.hadoop.fs.s3a.attempts.maximum", "10")
-                    .config("spark.hadoop.fs.s3a.retry.limit", "10")
-                    .config("spark.hadoop.fs.s3a.retry.interval", "1s")
-                    .getOrCreate())
+        builder = (SparkSession.builder.master("local[2]").appName("fleet-daily-reconciliation")
+                   .config("spark.sql.session.timeZone", "UTC")
+                   .config("spark.sql.ansi.enabled", "true")
+                   .config("spark.sql.shuffle.partitions", "2")
+                   .config("spark.ui.enabled", "false"))
+        # Unit/parity tests read local Parquet and intentionally have no MinIO
+        # credentials. Hadoop rejects a null S3A secret even before local file
+        # operations begin, so configure S3A only for the deployed object-store
+        # path where both credentials are present.
+        if MINIO_ACCESS_KEY and MINIO_SECRET_KEY:
+            builder = (builder
+                       .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+                       .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
+                       .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
+                       .config("spark.hadoop.fs.s3a.path.style.access", "true")
+                       .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+                       .config("spark.hadoop.fs.s3a.attempts.maximum", "10")
+                       .config("spark.hadoop.fs.s3a.retry.limit", "10")
+                       .config("spark.hadoop.fs.s3a.retry.interval", "1s"))
+        elif MINIO_ACCESS_KEY or MINIO_SECRET_KEY:
+            raise ValueError("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be configured together")
+        _session = builder.getOrCreate()
         _session.sparkContext.setLogLevel("WARN")
     return _session
 

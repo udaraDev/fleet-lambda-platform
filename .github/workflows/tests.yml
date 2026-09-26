@@ -10,6 +10,8 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -v
+      - name: Generate disposable Compose credentials
+        run: python -m scripts.bootstrap_env
       - run: docker compose config --quiet
 
   clean-compose:
