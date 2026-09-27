@@ -13,6 +13,34 @@ behavior and limitations.
 
 ## Architecture
 
+### 1. Logical Data Flow
+This diagram illustrates the core Lambda architecture, explicitly highlighting the independent Speed and Raw streaming consumers reading from Kafka.
+
+```mermaid
+flowchart LR
+    Telemetry["Telemetry simulator"] --> Kafka[("Kafka: trip-events")]
+    
+    Kafka --> Speed["Spark speed stream<br/>live state, alerts, 1-minute windows"]
+    Kafka --> Raw["Spark raw stream"]
+    Raw --> Archive[("MinIO: partitioned Parquet<br/>and integrity manifests")]
+
+    Expenses["Daily expense simulator"] --> Landing[("Shared volume: expense CSV")]
+    Landing --> Batch["Spark batch reconciliation"]
+    Airflow["Airflow: daily and quality workflows"] -.->|orchestrates| Batch
+    Airflow -.->|checks| Landing
+    Archive --> Batch
+
+    Speed --> Postgres[("PostgreSQL: serving tables")]
+    Batch --> Postgres
+    Batch --> Exports[("Shared volume: JSON, CSV,<br/>HTML and Parquet reports")]
+    Postgres --> API["FastAPI and business page"]
+    Prometheus["Prometheus metrics and alerts"] -.->|scrapes| API
+    Grafana["Grafana dashboards"] -.->|queries| Prometheus
+```
+
+### 2. Physical Implementation Details
+The following diagram details the exact Python scripts, specific PostgreSQL tables, Airflow tasks, and ports used to deliver this architecture.
+
 ![Architecture Diagram](docs/img/architecture.png)
 
 Solid arrows show data movement; dashed arrows show orchestration or

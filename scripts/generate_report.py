@@ -20,41 +20,6 @@ INK = colors.HexColor('#1C2730')
 MUTED = colors.HexColor('#526570')
 
 
-class Architecture(Flowable):
-    def __init__(self):
-        super().__init__(); self.width = 165*mm; self.height = 100*mm
-    def draw(self):
-        c = self.canv
-        c.saveState(); c.translate(14*mm, 0); c.scale(.89, .89)
-        def box(x,y,w,h,title,sub):
-            c.setFillColor(PALE); c.setStrokeColor(TEAL); c.roundRect(x,y,w,h,3*mm,fill=1)
-            c.setFillColor(NAVY); c.setFont('Helvetica-Bold',9); c.drawCentredString(x+w/2,y+h-6*mm,title)
-            c.setFillColor(INK); c.setFont('Helvetica',7.5)
-            for i,line in enumerate(sub): c.drawCentredString(x+w/2,y+h-11*mm-i*4*mm,line)
-        def arrow(x1,y1,x2,y2):
-            c.setStrokeColor(MUTED); c.setFillColor(MUTED); c.line(x1,y1,x2,y2)
-            length = hypot(x2-x1, y2-y1); ux,uy=(x2-x1)/length,(y2-y1)/length
-            px,py=-uy,ux; bx,by=x2-ux*3*mm,y2-uy*3*mm
-            c.line(x2,y2,bx+px*1.5*mm,by+py*1.5*mm)
-            c.line(x2,y2,bx-px*1.5*mm,by-py*1.5*mm)
-        box(0,82*mm,38*mm,24*mm,'Telemetry source',['Python, 12 vehicles','every 2 real seconds'])
-        box(52*mm,82*mm,30*mm,24*mm,'Kafka',['trip-events','3 partitions'])
-        box(96*mm,82*mm,43*mm,24*mm,'Spark speed',['live state + alerts','1-minute windows'])
-        arrow(38*mm,94*mm,52*mm,94*mm); arrow(82*mm,94*mm,96*mm,94*mm)
-        box(96*mm,45*mm,43*mm,24*mm,'Spark raw + MinIO',['Parquet by date','SHA-256 manifest'])
-        box(0,45*mm,38*mm,24*mm,'Daily source',['expense CSV','one simulated day'])
-        box(50*mm,45*mm,32*mm,24*mm,'Airflow',['profit + DQ DAGs','date isolation'])
-        arrow(38*mm,57*mm,50*mm,57*mm); arrow(96*mm,57*mm,82*mm,57*mm)
-        arrow(67*mm,82*mm,105*mm,69*mm)
-        box(50*mm,8*mm,48*mm,24*mm,'Spark batch',['dedup + coverage','cost join + profit'])
-        arrow(66*mm,45*mm,66*mm,32*mm)
-        box(112*mm,8*mm,42*mm,24*mm,'PostgreSQL',['live + daily tables','versions + quarantine'])
-        arrow(98*mm,20*mm,112*mm,20*mm)
-        c.line(139*mm,94*mm,148*mm,94*mm); arrow(148*mm,94*mm,148*mm,32*mm)
-        box(5*mm,8*mm,32*mm,24*mm,'Serving',['FastAPI + Prometheus','Grafana dashboards'])
-        c.line(133*mm,8*mm,133*mm,3*mm); c.line(133*mm,3*mm,37*mm,3*mm)
-        arrow(37*mm,3*mm,37*mm,8*mm)
-        c.restoreState()
 
 
 def p(text, style='BodyX'):
@@ -151,7 +116,7 @@ story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
  p('Trade-off','H2X'), p('Lambda duplicates identity and transformation logic. This risk is mitigated by a shared fixed event-field contract, UTC timestamp canonicalization, parity tests, persistent identities, deterministic daily recomputation and explicit completeness states. Eventual consistency remains: a late correction is visible after the next Airflow restatement.'),
  p('<b>Consistency promise:</b> no end-to-end exactly-once claim. Kafka checkpoints, event identities, trip keys, archive manifests, database transactions and idempotent restatement provide practical replay safety within the documented single-writer dataset contract.','Callout'), PageBreak()]
 
-story += [p('3. Delivered architecture and data flow','H1X'), Architecture(),
+story += [p('3. Delivered architecture and data flow','H1X'), Image(str(ROOT / 'docs' / 'img' / 'architecture.png'), width=165*mm, height=100*mm),
  p('Figure 1. Delivered local Lambda architecture. Kafka feeds independent speed and raw consumers; PostgreSQL serves FastAPI and Prometheus is visualised in Grafana. The MinIO archive, database and checkpoints are operated as one dataset.' ,'Small'),
  p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. Per-event metric contributions allow the serving transaction to retract a discredited identity or trip and protect the corrected window from a later non-retracting Spark update. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
  p('<b>Storage contracts:</b> Raw MinIO Parquet is accepted only through committed row-count and SHA-256 manifests. PostgreSQL stores live state, trips, identities, conflicts, quarantine, run history and daily profit. Every published JSON, CSV, HTML and Parquet representation is covered by one committed digest manifest.','Callout'), PageBreak()]
