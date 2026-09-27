@@ -1,4 +1,4 @@
-﻿# ADR 0001: Lambda Architecture Over Kappa
+# ADR 0001: Lambda Architecture Over Kappa
 
 **Date:** 2026-03-01  
 **Status:** Accepted  
@@ -10,7 +10,8 @@
 
 The EC8203 brief requires an end-to-end big data pipeline with a streaming source,
 a daily-batch source, meaningful processing, a queryable serving layer, and
-observability. The two dominant architectural patterns are Lambda and Kappa.
+observability. The two dominant architectural patterns are Lambda (introduced by
+Nathan Marz) and Kappa (popularized by Jay Kreps).
 
 The use case is a ride-hailing fleet operator with two distinct data consumers:
 
@@ -56,7 +57,7 @@ Two independent processing paths over one shared, immutable raw dataset:
 
 ## Rejected Alternative: Kappa
 
-Kappa (single streaming path; replay from the log to recompute) was seriously
+Kappa (single streaming path; replay from the log to recompute, introduced by Kreps in 2014) was seriously
 considered. It has genuine advantages: less code, one codebase, no dual-logic drift.
 
 **Rejected for three concrete reasons:**

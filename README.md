@@ -13,26 +13,7 @@ behavior and limitations.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    Telemetry["Telemetry simulator"] --> Kafka[("Kafka: trip-events")]
-    Kafka --> Speed["Spark speed stream<br/>live state, alerts, 1-minute windows"]
-    Kafka --> Raw["Spark raw stream"]
-    Raw --> Archive[("MinIO: partitioned Parquet<br/>and integrity manifests")]
-
-    Expenses["Daily expense simulator"] --> Landing[("Shared volume: expense CSV")]
-    Landing --> Batch["Spark batch reconciliation"]
-    Airflow["Airflow: daily and quality workflows"] -.->|orchestrates| Batch
-    Airflow -.->|checks| Landing
-    Archive --> Batch
-
-    Speed --> Postgres[("PostgreSQL: serving tables")]
-    Batch --> Postgres
-    Batch --> Exports[("Shared volume: JSON, CSV,<br/>HTML and Parquet reports")]
-    Postgres --> API["FastAPI and business page"]
-    Prometheus["Prometheus metrics and alerts"] -.->|scrapes| API
-    Grafana["Grafana dashboards"] -.->|queries| Prometheus
-```
+![Architecture Diagram](docs/img/architecture.png)
 
 Solid arrows show data movement; dashed arrows show orchestration or
 monitoring. The quality workflow also checks archive and report integrity.
@@ -49,8 +30,9 @@ Spark, and PostgreSQL choices.
 
 ## Start locally
 
-You need Docker Desktop with Linux containers, Docker Compose v2, Python 3.11,
-PowerShell 7 for the commands below, at least 8 GB available to Docker, and
+You need Docker Desktop with Linux containers, Docker Compose v2.20+ (with
+BuildKit enabled), Python 3.11, PowerShell 7 for the commands below,
+at least 8 GB available to Docker, and
 internet access for the first image build. From the repository root:
 
 ```powershell

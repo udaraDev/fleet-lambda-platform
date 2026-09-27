@@ -140,14 +140,14 @@ story += [p('1. Use case and requirements','H1X'),
  p('The persistent simulation clock starts at 2026-03-01 00:00 UTC. One simulated day equals 300 real seconds. A telemetry tick occurs every two real seconds and advances 9.6 simulated minutes. Times are UTC and monetary values are stored as integer LKR cents.','Callout'), PageBreak()]
 
 story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
- p('Lambda was selected because corrected daily cost files must restate historical accounts while immutable trip evidence remains replayable. The speed path gives operational visibility; the batch path recomputes a vehicle-day result from committed archives and the latest valid expense file.'),
+ p('Lambda (introduced by Nathan Marz) was selected because corrected daily cost files must restate historical accounts while immutable trip evidence remains replayable. The speed path gives operational visibility; the batch path recomputes a vehicle-day result from committed archives and the latest valid expense file.'),
  table([['Decision factor','Lambda in this project','Kappa alternative'],
  ['Latency','Live state and lookbacks update every micro-batch.','A single stream could also meet low latency.'],
  ['Replay','Spark batch rereads verified Parquet by day.','Both expenses and telemetry must be durable versioned events.'],
  ['Consistency','Daily output is restated from a fixed input snapshot and marked by run/version.','Historical keyed state needs correction/retraction semantics.'],
  ['Cost/complexity','Two code paths but simple local recovery and explainable accounting.','One topology in principle, but more state/replay operational complexity here.'],
  ['Failure isolation','Live metrics can continue when one expense date fails.','A unified topology can couple operational and accounting failures.']], [31*mm,67*mm,67*mm]),
- p('Rejected alternative','H2X'), p('Kappa was rejected for this two-week local platform, not because Kappa is inferior in general. It becomes attractive when all sources are naturally versioned event streams and the team can operate replay, state migration and retractions. Daily CSV corrections make the separate batch truth path easier to verify and defend.'),
+ p('Rejected alternative','H2X'), p('Kappa (popularized by Jay Kreps) was rejected for this two-week local platform, not because Kappa is inferior in general. It becomes attractive when all sources are naturally versioned event streams and the team can operate replay, state migration and retractions. Daily CSV corrections make the separate batch truth path easier to verify and defend.'),
  p('Trade-off','H2X'), p('Lambda duplicates identity and transformation logic. This risk is mitigated by a shared fixed event-field contract, UTC timestamp canonicalization, parity tests, persistent identities, deterministic daily recomputation and explicit completeness states. Eventual consistency remains: a late correction is visible after the next Airflow restatement.'),
  p('<b>Consistency promise:</b> no end-to-end exactly-once claim. Kafka checkpoints, event identities, trip keys, archive manifests, database transactions and idempotent restatement provide practical replay safety within the documented single-writer dataset contract.','Callout'), PageBreak()]
 
@@ -244,8 +244,10 @@ story += [p('10. Conclusion and references','H1X'),
  p('The strongest engineering decision is not a particular tool but the treatment of uncertainty. Duplicate identities are idempotent, conflicts invalidate authority, missing telemetry does not become zero revenue, bad cost files preserve the last good result, and published files are checked rather than assumed. The result is a defensible teaching system with explicit boundaries.'),
  p('References','H2X')] + bullets([
  'EC8203 Data Engineering Mini-Project brief, 2026, pages 1-5.',
+ 'Marz, N. and Warren, J. (2015) Big Data: Principles and best practices of scalable realtime data systems. Manning.',
+ 'Kreps, J. (2014) Questioning the Lambda Architecture. O\'Reilly Radar.',
  'Apache Kafka 3.9 documentation: https://kafka.apache.org/39/',
- 'Apache Spark 3.5.6 Structured Streaming programming guide and Kafka integration documentation: https://spark.apache.org/docs/3.5.6/',
+ 'Apache Spark 3.5.6 Structured Streaming guide and Kafka integration: https://spark.apache.org/docs/3.5.6/',
  'Apache Airflow 2.10.5 documentation: https://airflow.apache.org/docs/apache-airflow/2.10.5/',
  'PostgreSQL 16 documentation: https://www.postgresql.org/docs/16/',
  'FastAPI documentation: https://fastapi.tiangolo.com/']) + [

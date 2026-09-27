@@ -168,5 +168,5 @@ with DAG(
     t3 = PythonOperator(task_id="check_archive_integrity", python_callable=_check_archive_integrity)
     t4 = PythonOperator(task_id="check_export_integrity", python_callable=_check_export_integrity)
 
-    # All four checks run in parallel; any failure marks the DAG run as failed.
-    [t1, t2, t3, t4]
+    # All four checks are root tasks with no dependencies.
+    # Airflow runs them in parallel; any single failure marks the DAG run as failed.
