@@ -69,15 +69,11 @@ exit after setup; that is expected. On a fresh dataset, the first expense file
 arrives after about five minutes; Airflow can then produce the first daily
 report. Builds may take longer on a cold machine.
 
-Open these localhost interfaces:
-
-- [Business page and API](http://localhost:8001/) · [API documentation](http://localhost:8001/docs)
-- [Pipeline health](http://localhost:8001/health/pipeline) · [Report health](http://localhost:8001/health/reports)
-- [Airflow](http://localhost:8080) · [Grafana](http://localhost:3000) · [Prometheus](http://localhost:9090) · [MinIO console](http://localhost:9001)
-
-Airflow, Grafana, and MinIO credentials are in `.env`. Ports bind to
-`127.0.0.1`; Kafka and PostgreSQL are not exposed to the host. A running page
-does not guarantee fresh data, so check both health endpoints before a demo.
+The web interfaces are available only on the computer running this Docker
+stack; they are not public links from GitHub. Airflow, Grafana, and MinIO
+credentials are in `.env`. Ports bind to `127.0.0.1`; Kafka and PostgreSQL are
+not exposed to the host. A running page does not guarantee fresh data, so
+check pipeline and report health before a demo.
 
 To stop the platform without removing its named volumes, run
 `docker compose down`. Do **not** use `--volumes` unless you intend to erase the
