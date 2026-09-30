@@ -1,4 +1,4 @@
-"""Generate the final EC8203 report PDF from verified project evidence."""
+"""Generate the final EC8202 report PDF from verified project evidence."""
 from pathlib import Path
 from html import escape
 from math import hypot
@@ -52,7 +52,7 @@ def bullets(items):
 def header_footer(canvas, doc):
     canvas.saveState(); canvas.setStrokeColor(colors.HexColor('#B9C5CB'))
     canvas.line(20*mm,15*mm,190*mm,15*mm); canvas.setFont('Helvetica',7.5); canvas.setFillColor(MUTED)
-    canvas.drawString(20*mm,10*mm,'EC8203 Applied Big Data Engineering | Fleet Lambda Platform')
+    canvas.drawString(20*mm,10*mm,'EC8202 Big Data Analytics | Fleet Lambda Platform')
     canvas.drawRightString(190*mm,10*mm,f'Page {doc.page}'); canvas.restoreState()
 
 
@@ -78,14 +78,14 @@ styles.add(ParagraphStyle('Small', parent=styles['BodyText'], fontSize=7.6, lead
 story = []
 story += [Spacer(1,35*mm), p('FLEET LAMBDA PLATFORM','TitleX'),
           p('Real-time ride-hailing operations and daily profitability reconciliation','SubTitle'),
-          Spacer(1,18*mm), p('<b>EC8203 Applied Big Data Engineering Mini-Project</b>','SubTitle'),
+          Spacer(1,18*mm), p('<b>EC8202 Big Data Analytics Mini-Project</b>','SubTitle'),
           Spacer(1,22*mm), table([['Project team','Registration number'],
           ['Threemavithana T.M.','EG/2021/4835'],
           ['Senevirathne P.U.S','EG/2021/4805'],
           ['Kodikara A.W.','EG/2021/4613'],
           ['Programme','BSc Computer Engineering'],
           ['Institution','University of Ruhuna'],['Report date','24 September 2026']], [75*mm,80*mm],8.5),
-          Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation and measured checks. It distinguishes local classroom evidence from production claims and does not claim a recorded demo video or production-scale capacity.','Callout'),
+          Spacer(1,16*mm), p('<b>Submission statement.</b> This report describes the delivered implementation and measured checks. The accompanying recorded demonstration shows the local pipeline and its observability. Captured evidence is distinguished from live refreshes; no production-scale capacity is claimed.','Callout'),
           PageBreak()]
 
 story += [p('1. Use case and requirements','H1X'),
@@ -116,8 +116,15 @@ story += [p('2. Architecture decision: Lambda vs Kappa','H1X'),
  p('Trade-off','H2X'), p('Lambda duplicates identity and transformation logic. This risk is mitigated by a shared fixed event-field contract, UTC timestamp canonicalization, parity tests, persistent identities, deterministic daily recomputation and explicit completeness states. Eventual consistency remains: a late correction is visible after the next Airflow restatement.'),
  p('<b>Consistency promise:</b> no end-to-end exactly-once claim. Kafka checkpoints, event identities, trip keys, archive manifests, database transactions and idempotent restatement provide practical replay safety within the documented single-writer dataset contract.','Callout'), PageBreak()]
 
-story += [p('3. Delivered architecture and data flow','H1X'), Image(str(ROOT / 'docs' / 'img' / 'architecture.png'), width=165*mm, height=100*mm),
- p('Figure 1. Delivered local Lambda architecture. Kafka feeds independent speed and raw consumers; PostgreSQL serves FastAPI and Prometheus is visualised in Grafana. The MinIO archive, database and checkpoints are operated as one dataset.' ,'Small'),
+story += [p('3. Architecture evolution and data flow','H1X'),
+ p('3.1 Earlier design - superseded','H2X'),
+ Image(str(ROOT / 'docs' / 'img' / 'architecture-previous-white.png'), width=165*mm, height=82.5*mm),
+ p('Figure 1. Earlier architecture diagram, retained with a white background. This records the original seven-stage Airflow proposal, not the final deployed workflow.','Small'),
+ p('The initial design separated waiting, validation, aggregation, joining, publication, rendering and metrics into seven Airflow tasks. The implementation consolidates these responsibilities into one orchestration task in the daily profitability workflow; a separate workflow performs data-quality checks. Spark still performs the batch aggregation and expense join.'),
+ p('<b>How to read the earlier diagram:</b> The local archive path and PostgreSQL-to-archive arrow belong only to the superseded proposal. The final diagram on the next page shows the implemented independent speed and raw Spark consumers and the direct raw-stream write to MinIO.','Callout'),
+ PageBreak(),
+ p('3.2 Final architecture overview','H1X'), Image(str(ROOT / 'docs' / 'img' / 'architecture.png'), width=165*mm, height=92.9*mm),
+ p('Figure 2. Final implemented architecture. Kafka branches to independent Spark speed and raw consumers. The speed consumer writes PostgreSQL; the raw consumer writes immutable Parquet and manifests directly to MinIO. Airflow orchestrates Spark batch reconciliation, and FastAPI serves PostgreSQL results to the dashboard and monitoring stack.','Small'),
  p('The speed query validates Kafka records, updates live state and computes one-minute event-time windows with a two-minute watermark. Per-event metric contributions allow the serving transaction to retract a discredited identity or trip and protect the corrected window from a later non-retracting Spark update. The raw query independently archives valid events to MinIO and publishes checksum manifests. A session advisory lock fences archive writes; a transaction lock protects serving commits. Airflow invokes Spark batch reconciliation independently for each ready date, newest first, with a configurable five-changed-date budget.'),
  p('<b>Storage contracts:</b> Raw MinIO Parquet is accepted only through committed row-count and SHA-256 manifests. PostgreSQL stores live state, trips, identities, conflicts, quarantine, run history and daily profit. Every published JSON, CSV, HTML and Parquet representation is covered by one committed digest manifest.','Callout'), PageBreak()]
 
@@ -162,10 +169,10 @@ story += [p('6. Observability and failure behaviour','H1X'), table([
 story += [p('7. Results and business output','H1X'),
  p('The running platform exposes a consolidated business page at http://localhost:8001. It combines current reporting/active vehicles, idle ratio, hourly earnings, zone activity and a selectable daily vehicle profitability table. It also states the report run, publication state, algorithm version and quality outcome.'),
  Image(str(ROOT / 'output' / 'evidence' / 'dashboard.png'), width=165*mm, height=105*mm),
- p('Figure 2. Actual local results page showing healthy ingestion, the live fleet summary and the parameterised Spark event-time zone view. The selectable daily table continues below the captured viewport.','Small'),
+ p('Figure 3. Actual local results page showing healthy ingestion, the live fleet summary and the parameterised Spark event-time zone view. The selectable daily table continues below the captured viewport.','Small'),
  p('Verified snapshots','H2X'), table([
  ['Evidence','Observed result'],
- ['Automated unit/API/archive tests','65 passed, 1 dependency-gated skip and 17 subtests; Spark parity also passed explicitly'],
+ ['Automated unit/API/archive tests','Host run: 65 passed and 1 dependency-gated skip. Docker run with Spark dependency: all 66 passed, including Spark/Python parity.'],
  ['Isolated Spark/PostgreSQL suite','26 named checks passed; disposable schema and isolated MinIO prefix'],
  ['Fresh volumes','Eighteen-service Compose definition; DAG imports, report, live, MinIO and monitoring checks'],
  ['Short throughput smoke test','10/100/500 target eps: all 30/300/1,500 events accepted; p95 latency 8.48/6.03/6.15 s'],
@@ -208,14 +215,14 @@ story += [p('10. Conclusion and references','H1X'),
  p('The delivered platform meets the core mini-project objective: two simulated sources feed an observable Lambda pipeline; independent Spark consumers provide raw and speed layers; Spark also performs historical reconciliation; Airflow orchestrates profitability and data-quality work; results land in queryable PostgreSQL and versioned exports; and FastAPI, Prometheus and Grafana expose operational and financial answers.'),
  p('The strongest engineering decision is not a particular tool but the treatment of uncertainty. Duplicate identities are idempotent, conflicts invalidate authority, missing telemetry does not become zero revenue, bad cost files preserve the last good result, and published files are checked rather than assumed. The result is a defensible teaching system with explicit boundaries.'),
  p('References','H2X')] + bullets([
- 'EC8203 Data Engineering Mini-Project brief, 2026, pages 1-5.',
- 'Marz, N. and Warren, J. (2015) Big Data: Principles and best practices of scalable realtime data systems. Manning.',
- 'Kreps, J. (2014) Questioning the Lambda Architecture. O\'Reilly Radar.',
- 'Apache Kafka 3.9 documentation: https://kafka.apache.org/39/',
- 'Apache Spark 3.5.6 Structured Streaming guide and Kafka integration: https://spark.apache.org/docs/3.5.6/',
- 'Apache Airflow 2.10.5 documentation: https://airflow.apache.org/docs/apache-airflow/2.10.5/',
- 'PostgreSQL 16 documentation: https://www.postgresql.org/docs/16/',
- 'FastAPI documentation: https://fastapi.tiangolo.com/']) + [
+ 'Department of Electrical and Information Engineering (2026) EC8202 Big Data Analytics Mini-Project brief. University of Ruhuna, pp. 1-5.',
+ 'Marz, N. and Warren, J. (2015) Big Data: Principles and best practices of scalable realtime data systems. Shelter Island, NY: Manning.',
+ 'Kreps, J. (2014) Questioning the Lambda Architecture. O\'Reilly Radar. Available at: https://www.oreilly.com/radar/questioning-the-lambda-architecture/ (Accessed: 29 September 2026).',
+ 'Apache Software Foundation (2025) Apache Kafka 3.9 documentation. Available at: https://kafka.apache.org/39/ (Accessed: 29 September 2026).',
+ 'Apache Software Foundation (2025) Spark 3.5.6 Structured Streaming programming guide. Available at: https://spark.apache.org/docs/3.5.6/structured-streaming-programming-guide.html (Accessed: 29 September 2026).',
+ 'Apache Software Foundation (2025) Apache Airflow 2.10.5 documentation. Available at: https://airflow.apache.org/docs/apache-airflow/2.10.5/ (Accessed: 29 September 2026).',
+ 'PostgreSQL Global Development Group (2026) PostgreSQL 16 documentation. Available at: https://www.postgresql.org/docs/16/ (Accessed: 29 September 2026).',
+ 'FastAPI (2026) FastAPI documentation. Available at: https://fastapi.tiangolo.com/ (Accessed: 29 September 2026).']) + [
  p('Submission artefacts','H2X'), table([['Artefact','Location / purpose'],
  ['Source repository/ZIP','Complete code, Compose, migrations, tests and CI workflow'],
  ['This PDF','Architecture decision, design, evidence, limitations and references'],
@@ -234,7 +241,7 @@ story += [p('10. Conclusion and references','H1X'),
 OUT.parent.mkdir(parents=True, exist_ok=True)
 doc = SimpleDocTemplate(str(OUT), pagesize=A4, rightMargin=20*mm, leftMargin=20*mm,
                         topMargin=20*mm, bottomMargin=22*mm,
-                        title='Fleet Lambda Platform - EC8203 Mini-Project',
+                        title='Fleet Lambda Platform - EC8202 Mini-Project',
                         author='Threemavithana T.M.; Senevirathne P.U.S; Kodikara A.W.')
 doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
 print(OUT)

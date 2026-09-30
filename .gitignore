@@ -20,6 +20,8 @@ airflow/logs/
 data/
 reports/*
 !reports/.gitkeep
+output/demo-video/
+output/demo-screen-test.png
 
 # IDE / OS
 .vscode/

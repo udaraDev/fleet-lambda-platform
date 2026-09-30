@@ -1,6 +1,6 @@
 # Team contribution statement
 
-This EC8203 mini-project is submitted by three BSc Computer Engineering students
+This EC8202 Big Data Analytics mini-project is submitted by three BSc Computer Engineering students
 at the University of Ruhuna:
 
 | Member | Registration number | Individual contribution |

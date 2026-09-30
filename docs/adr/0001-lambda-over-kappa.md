@@ -8,7 +8,7 @@
 
 ## Context
 
-The EC8203 brief requires an end-to-end big data pipeline with a streaming source,
+The EC8202 brief requires an end-to-end big data pipeline with a streaming source,
 a daily-batch source, meaningful processing, a queryable serving layer, and
 observability. The two dominant architectural patterns are Lambda (introduced by
 Nathan Marz) and Kappa (popularized by Jay Kreps).

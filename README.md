@@ -139,8 +139,10 @@ replication, or disaster-recovery automation. Do not expose it publicly.
 
 ## Submission and team
 
-- [Final report PDF](output/pdf/fleet-lambda-platform-report.pdf)
-- [Submission ZIP](output/fleet-lambda-platform-submission.zip)
+- [Source code ZIP](output/fleet-lambda-platform-source-submission.zip) - current source,
+  configuration, tests, diagrams, documentation and verification evidence.
+- Submit the final report PDF and demo MP4 as separate deliverables. Generated
+  reports and video assets are not included in the source code ZIP.
 - [Demo runbook](docs/DEMO_RUNBOOK.md) and [viva questions](docs/VIVA_QA.md)
 - [Contribution statement](docs/CONTRIBUTION_STATEMENT.md)
 
