@@ -1,4 +1,4 @@
-"""Data Quality DAG — separate observability pipeline per PROJECT_PLAN.md §5.1.
+"""Data Quality DAG for separate pipeline observability.
 
 Runs hourly and checks:
   1. Quarantine rate for recent expense runs (should be <= DQ_FAILURE_THRESHOLD).

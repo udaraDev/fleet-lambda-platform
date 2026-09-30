@@ -17,7 +17,7 @@ SOURCE_DIRS = {
 }
 SOURCE_FILES = {
     ".dockerignore", ".env.example", ".gitattributes", ".gitignore",
-    "docker-compose.yml", "Dockerfile", "Makefile", "PROJECT_PLAN.md",
+    "docker-compose.yml", "Dockerfile", "Makefile",
     "README.md", "requirements-api.txt", "requirements-dev.txt",
     "requirements.txt",
 }
@@ -27,14 +27,10 @@ EVIDENCE = {
     "output/evidence/final-verification.json",
     "output/evidence/performance-benchmark.json",
 }
-EXTRA = {
-    "docs/img/architecture-previous-white.png",
-    "scripts/package_source_submission.py",
-}
+EXTRA = {"scripts/package_source_submission.py"}
 REQUIRED = {
     "README.md", "docker-compose.yml", ".env.example",
     "docs/CONTRIBUTION_STATEMENT.md", "docs/img/architecture.png",
-    "docs/img/architecture-previous-white.png", "scripts/generate_report.py",
     "scripts/package_source_submission.py", "simulators/producer_stream.py",
     "simulators/producer_batch.py", "streaming/raw_job.py",
     "streaming/speed_job.py", "batch/spark_reconcile.py",

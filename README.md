@@ -8,18 +8,16 @@ and a batch path for authoritative historical reports.
 
 This is a classroom deployment on one Docker host, not a production service.
 One simulated day lasts five real minutes; monetary values are integer LKR
-cents. See the [final delivered scope](docs/FINAL_SCOPE.md) for detailed
-behavior and limitations.
+cents. See the [delivered scope](docs/FINAL_SCOPE.md) for limitations.
 
 ## Architecture
 
-### 1. Logical Data Flow
-This diagram illustrates the core Lambda architecture, explicitly highlighting the independent Speed and Raw streaming consumers reading from Kafka.
+Kafka feeds independent speed and raw Spark consumers:
 
 ```mermaid
 flowchart LR
     Telemetry["Telemetry simulator"] --> Kafka[("Kafka: trip-events")]
-    
+
     Kafka --> Speed["Spark speed stream<br/>live state, alerts, 1-minute windows"]
     Kafka --> Raw["Spark raw stream"]
     Raw --> Archive[("MinIO: partitioned Parquet<br/>and integrity manifests")]
@@ -38,10 +36,7 @@ flowchart LR
     Grafana["Grafana dashboards"] -.->|queries| Prometheus
 ```
 
-### 2. Physical Implementation Details
-The following diagram details the exact Python scripts, specific PostgreSQL tables, Airflow tasks, and ports used to deliver this architecture.
-
-![Architecture Diagram](docs/img/architecture.png)
+![Implementation architecture](docs/img/architecture.png)
 
 Solid arrows show data movement; dashed arrows show orchestration or
 monitoring. The quality workflow also checks archive and report integrity.
@@ -51,10 +46,9 @@ Spark Structured Streaming consumers read it: the speed consumer updates
 PostgreSQL, while the raw consumer commits immutable Parquet to MinIO. Airflow
 orchestrates Spark reconciliation of that archive with the daily expense CSV.
 This separation lets a corrected cost file restate historical results without
-rewriting source events. PostgreSQL serves indexed live and daily queries;
-MinIO/Parquet retains the reusable event history. The batch path may briefly
-lag the speed path. [Architecture decisions](docs/adr/) explain the Lambda,
-Spark, and PostgreSQL choices.
+rewriting source events. PostgreSQL serves live and daily queries; MinIO retains
+the event history. The batch path may briefly lag the speed path. The
+[architecture decisions](docs/adr/) explain the technology choices.
 
 ## Start locally
 
@@ -144,19 +138,4 @@ replication, or disaster-recovery automation. Do not expose it publicly.
 - [Final report PDF](output/pdf/fleet-lambda-platform-report.pdf) is included in
   the repository and submitted separately. The demo MP4 is submitted separately.
   Neither generated media file is included in the source code ZIP.
-- [Demo runbook](docs/DEMO_RUNBOOK.md) and [viva questions](docs/VIVA_QA.md)
 - [Contribution statement](docs/CONTRIBUTION_STATEMENT.md)
-
-The three University of Ruhuna BSc Computer Engineering members led distinct,
-equally weighted work areas:
-
-- **Threemavithana T.M. (EG/2021/4835):** platform and ingestion - deployment,
-  simulation, Kafka, MinIO archive, and monitoring.
-- **Senevirathne P.U.S (EG/2021/4805):** stream processing and serving - event
-  contracts, Spark speed layer, PostgreSQL serving, and FastAPI.
-- **Kodikara A.W. (EG/2021/4613):** batch processing and data quality - Airflow,
-  Spark reconciliation, quarantine, and daily reports.
-
-All three share responsibility for the architecture, integration, testing,
-documentation, final report, and live demonstration. Each should be able to
-explain the complete system.

@@ -1,7 +1,6 @@
 ﻿# Delivered scope and architecture decision
 
-This document supersedes proposed features and completion claims in the original
-`PROJECT_PLAN.md`.
+This document records the delivered implementation and its boundaries.
 
 ## Accepted implementation
 
@@ -91,10 +90,7 @@ their replay/state infrastructure reliably. Lambda is not universally superior.
   exact duplicates cannot refresh it. Historical migration timestamps alone are not
   trustworthy source arrival times, so event lag is also checked.
 
-## Submission choices
+## Team
 
-The submission uses a prepared live demo.
-The demo runbook contains timings, commands, expected outcomes and viva questions.
-The project is submitted by the three members named in the README. Their distinct,
-equally weighted contributions and shared overall responsibility are recorded in
+Distinct contributions and shared overall responsibility are recorded in
 `CONTRIBUTION_STATEMENT.md`.
