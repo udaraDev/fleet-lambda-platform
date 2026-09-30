@@ -22,6 +22,19 @@ reports/*
 !reports/.gitkeep
 output/demo-video/
 output/demo-screen-test.png
+output/docx/
+output/pdf/architecture-check-*.png
+output/pdf/*-draft.pdf
+output/fleet-lambda-platform-submission.zip
+debug.log
+
+# Local demo editing utilities; the submitted video is delivered separately.
+scripts/*demo*.py
+scripts/*video*.py
+scripts/*voice*.py
+scripts/*elevenlabs*.py
+scripts/refresh_submission_visuals.py
+scripts/generate_word_report.py
 
 # IDE / OS
 .vscode/

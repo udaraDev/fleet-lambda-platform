@@ -1,4 +1,4 @@
-"""Generate the final EC8202 report PDF from verified project evidence."""
+"""Generate a report draft from project evidence; preserve the edited final PDF."""
 from pathlib import Path
 from html import escape
 from math import hypot
@@ -11,7 +11,7 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, PageBreak,
     Table, TableStyle, KeepTogether, Flowable, Image)
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'output' / 'pdf' / 'fleet-lambda-platform-report.pdf'
+OUT = ROOT / 'output' / 'pdf' / 'fleet-lambda-platform-report-draft.pdf'
 
 NAVY = colors.HexColor('#18354A')
 TEAL = colors.HexColor('#167287')
